@@ -99,10 +99,17 @@ const state = {
   timers: [],
 };
 
+// Pre-rename links (bookmarks, history) -> current routes.
+const LEGACY_ROUTES = { honeypots: 'xpods', honeypot: 'xpod' };
+
 function route() {
   const hash = location.hash.replace(/^#/, '') || '/overview';
   const [path, query] = hash.split('?');
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
+  if (LEGACY_ROUTES[parts[0]]) {
+    parts[0] = LEGACY_ROUTES[parts[0]];
+    history.replaceState(null, '', '#/' + parts.map(encodeURIComponent).join('/') + (query ? '?' + query : ''));
+  }
   return { parts, params: Object.fromEntries(new URLSearchParams(query || '')) };
 }
 function go(path, params) { location.hash = path + (params ? qs(params) : ''); }

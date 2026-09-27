@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 import ipaddress
 import json
@@ -7,7 +8,7 @@ import sys
 from contextlib import asynccontextmanager
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import analytics, auth, config, db, ingest, manager
@@ -56,6 +57,8 @@ async def security(request: Request, call_next):
     response.headers["Referrer-Policy"] = "no-referrer"
     if path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
+    elif path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -345,6 +348,17 @@ def get_audit(limit: int = Query(200, ge=1, le=1000)):
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+def _asset_version() -> str:
+    h = hashlib.sha256()
+    for name in ("app.js", "style.css"):
+        h.update((STATIC / name).read_bytes())
+    return h.hexdigest()[:12]
+
+
+# Asset URLs carry a content hash so a redeploy never runs against a stale cached script.
+INDEX_HTML = (STATIC / "index.html").read_text().replace("__V__", _asset_version())
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return HTMLResponse(INDEX_HTML, headers={"Cache-Control": "no-cache"})
