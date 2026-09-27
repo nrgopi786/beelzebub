@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
     meta TEXT NOT NULL DEFAULT '{}', created TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_assistant_messages_conv ON assistant_messages(conv_id, id);
+CREATE TABLE IF NOT EXISTS telemetry_enrollments (
+    id TEXT PRIMARY KEY, label TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+    created TEXT NOT NULL, created_by TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0,
+    last_seen TEXT, event_count INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY, ts TEXT NOT NULL, user TEXT NOT NULL,
     action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT ''

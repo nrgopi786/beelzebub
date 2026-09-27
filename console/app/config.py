@@ -18,3 +18,4 @@ INGEST_INTERVAL = float(os.environ.get("CONSOLE_INGEST_INTERVAL", "3"))
 
 LLM_URL = os.environ.get("CONSOLE_LLM_URL", f"http://127.0.0.1:{os.environ.get('CONSOLE_LLM_PORT', '11500')}")
 LLM_MODEL = os.environ.get("CONSOLE_LLM_MODEL", "qwen2.5:3b")
+OS_URL = os.environ.get("CONSOLE_OS_URL", f"http://127.0.0.1:{os.environ.get('CONSOLE_OS_PORT', '9200')}")

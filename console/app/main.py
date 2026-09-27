@@ -11,7 +11,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Respo
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, assistant, auth, config, db, ingest, manager
+from . import analytics, assistant, auth, config, db, ingest, manager, store, telemetry
 from .analytics import Filters
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -42,7 +42,7 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
 @app.middleware("http")
 async def security(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/") and path != "/api/login":
+    if path.startswith("/api/") and path not in ("/api/login", "/api/telemetry"):
         user = auth.read_token(request.cookies.get(auth.COOKIE))
         if not user:
             return JSONResponse({"detail": "authentication required"}, status_code=401)
@@ -68,11 +68,11 @@ def current_user(request: Request) -> str:
 
 def filters(client: str | None = None, protocol: str | None = None, ip: str | None = None,
             session: str | None = None, status: str | None = None, q: str | None = None,
-            since: str | None = "24h", until: str | None = None) -> Filters:
+            since: str | None = "24h", until: str | None = None, source: str | None = None) -> Filters:
     f = Filters(client or None, protocol or None, ip or None, session or None, status or None,
-                (q or "").strip()[:200] or None, since, until or None)
+                (q or "").strip()[:200] or None, since, until or None, source or None)
     try:
-        f.where()
+        f.query()
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     return f
@@ -127,13 +127,13 @@ def get_stats(f: Filters = Depends(filters)):
 
 @app.get("/api/events")
 def get_events(f: Filters = Depends(filters), limit: int = Query(100, ge=1, le=500),
-               before: int | None = None):
+               before: str | None = None):
     with db.session() as conn:
         return analytics.events(conn, f, limit, before)
 
 
 @app.get("/api/events/{event_id}")
-def get_event(event_id: int):
+def get_event(event_id: str):
     with db.session() as conn:
         ev = analytics.event(conn, event_id)
     if not ev:
@@ -180,8 +180,9 @@ def put_ip_note(ip: str, body: dict = Body(...), user: str = Depends(current_use
     return {"ok": True}
 
 
-EXPORT_COLS = ["id", "ts", "client", "protocol", "status", "msg", "session", "src_ip", "src_port",
-               "user", "password", "command", "method", "uri", "user_agent", "host", "description"]
+EXPORT_COLS = ["id", "ts", "source", "client", "protocol", "status", "msg", "session", "src_ip",
+               "src_port", "user", "password", "command", "method", "uri", "url", "title",
+               "user_agent", "host", "device", "description"]
 
 
 def _csv_safe(value) -> str:
@@ -190,40 +191,53 @@ def _csv_safe(value) -> str:
     return "'" + s if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s
 
 
+def _scan_store(query: dict, fields):
+    """Yield event source dicts across the whole result set via search_after."""
+    after = None
+    while True:
+        res = store.search(query, size=1000, sort=[{"ts": "asc"}, {"_id": "asc"}], source=fields,
+                           search_after=after)
+        hits = res["hits"]["hits"]
+        if not hits:
+            return
+        for h in hits:
+            yield h["_id"], h["_source"]
+        if len(hits) < 1000:
+            return
+        after = hits[-1]["sort"]
+
+
 @app.get("/api/export")
 def export(f: Filters = Depends(filters), format: str = Query("csv", pattern="^(csv|json|ioc)$"),
            user: str = Depends(current_user)):
-    where, args = f.where()
+    query = f.query()
     with db.session() as conn:
         db.audit(conn, user, "export", format, json.dumps(f.__dict__))
 
     def stream():
-        conn = db.connect()
-        try:
-            if format == "ioc":
-                cond = "src_ip != ''"
-                w = f"{where} AND {cond}" if where else f" WHERE {cond}"
-                yield "# Xpod source IPs\n"
-                for row in conn.execute(f"SELECT DISTINCT src_ip FROM events{w} ORDER BY src_ip", args):
-                    yield row[0] + "\n"
-                return
-            cur = conn.execute(f"SELECT {', '.join(EXPORT_COLS)} FROM events{where} ORDER BY id", args)
-            if format == "json":
-                for row in cur:
-                    yield json.dumps(dict(row), ensure_ascii=False) + "\n"
-                return
-            buf = io.StringIO()
-            writer = csv.writer(buf)
-            writer.writerow(EXPORT_COLS)
-            for row in cur:
-                writer.writerow([_csv_safe(v) for v in row])
-                if buf.tell() > 65536:
-                    yield buf.getvalue()
-                    buf.seek(0)
-                    buf.truncate()
-            yield buf.getvalue()
-        finally:
-            conn.close()
+        if format == "ioc":
+            seen = set()
+            yield "# source IPs\n"
+            for _id, src in _scan_store(query, ["src_ip"]):
+                ip = src.get("src_ip")
+                if ip and ip not in seen:
+                    seen.add(ip)
+                    yield ip + "\n"
+            return
+        if format == "json":
+            for _id, src in _scan_store(query, EXPORT_COLS[1:]):
+                yield json.dumps({"id": _id, **src}, ensure_ascii=False) + "\n"
+            return
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(EXPORT_COLS)
+        for _id, src in _scan_store(query, EXPORT_COLS[1:]):
+            writer.writerow([_csv_safe(_id if c == "id" else src.get(c)) for c in EXPORT_COLS])
+            if buf.tell() > 65536:
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate()
+        yield buf.getvalue()
 
     media = {"csv": "text/csv", "json": "application/x-ndjson", "ioc": "text/plain"}[format]
     ext = {"csv": "csv", "json": "ndjson", "ioc": "txt"}[format]
@@ -408,6 +422,47 @@ def assistant_resolve(pid: str, body: dict = Body(...), user: str = Depends(curr
         return assistant.resolve(pid, user, bool(body.get("approve")))
     except KeyError:
         raise HTTPException(404, "action not found, already handled or expired") from None
+
+
+# --------------------------------------------------------------------------- store + telemetry
+
+@app.get("/api/store/status")
+def store_status():
+    return store.health()
+
+
+@app.post("/api/telemetry")
+async def telemetry_ingest(request: Request, body: dict = Body(...)):
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.lower().startswith("bearer ") else request.headers.get("x-telemetry-token", "")
+    src_ip = request.client.host if request.client else ""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        src_ip = fwd.split(",")[0].strip()
+    result = telemetry.ingest(token, body, src_ip)
+    if not result.get("ok"):
+        raise HTTPException(result.get("code", 400), result.get("error", "rejected"))
+    return result
+
+
+@app.get("/api/enrollments")
+def get_enrollments(user: str = Depends(current_user)):
+    return telemetry.list_enrollments()
+
+
+@app.post("/api/enrollments")
+def post_enrollment(body: dict = Body(...), user: str = Depends(current_user)):
+    try:
+        return telemetry.create_enrollment(str(body.get("label", "")), user)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.delete("/api/enrollments/{tid}")
+def delete_enrollment(tid: str, user: str = Depends(current_user)):
+    if not telemetry.revoke_enrollment(tid, user):
+        raise HTTPException(404, "enrollment not found")
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- frontend

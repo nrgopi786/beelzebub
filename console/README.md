@@ -50,9 +50,12 @@ cd console
 
 ```
 console container (host netns, 127.0.0.1:8088)
- ├─ FastAPI + SQLite (console/data/console.db)
+ ├─ FastAPI
+ ├─ OpenSearch (127.0.0.1:9200)  ← shared event store: Xpod activity + browser telemetry
+ ├─ SQLite (console/data/console.db)  ← console metadata only: login, IP notes, audit, chats, enrollments, ingest offsets
  ├─ assistant ──► ollama container (127.0.0.1:11500, models in a named volume)
- ├─ ingester: tails deploy/clients/*/data/logs/beelzebub.log + rotated *.gz every 3s
+ ├─ ingester: tails deploy/clients/*/data/logs/beelzebub.log + rotated *.gz every 3s ──► OpenSearch
+ ├─ /api/telemetry ← enrolled browser devices POST visited URLs ──► OpenSearch
  └─ docker CLI + deploy.sh ──► /var/run/docker.sock ──► hp-<client> stacks
 ```
 
@@ -63,6 +66,45 @@ console container (host netns, 127.0.0.1:8088)
   re-reading an archive that overlaps the live log is harmless.
 - The raw log files remain the source of truth. Deleting `console/data/console.db`
   rebuilds the index from them on the next start.
+
+## Event store (OpenSearch)
+
+All events — Xpod attacker activity **and** browser telemetry — live in one OpenSearch
+index set (`events-*`), distinguished by a `source` field (`xpod` | `browser`). This is
+the expandable, shared store the whole frontend reads, so browsing and honeypot activity
+appear together, filterable by source. It replaces SQLite for events; SQLite now holds
+only console metadata (login, IP notes, audit, assistant chats, enrollment tokens, and
+file-ingest offsets).
+
+- Loopback-only, single-node, security plugin disabled (the trust boundary is the host;
+  only the console talks to it). Heap capped at 512 MB (`OPENSEARCH_JAVA_OPTS`), container
+  limited to `CONSOLE_OS_MEM` (default 1500m).
+- The raw Xpod log files remain the source of truth. If the store is wiped, delete the
+  `ingest_files`/`ingest_archives` rows (or `console.db`) and the ingester re-indexes from
+  the logs on the next pass; events are de-duplicated by document id.
+- Retention: `CONSOLE_RETENTION_DAYS` in `.env` runs a daily `delete_by_query`; raw logs
+  follow the per-Xpod rotation settings independently.
+
+## Browser telemetry
+
+Enrolled devices report **visited page URLs only** (URL, title, timestamp) to
+`POST /api/telemetry`, authenticated by a per-device bearer token issued under
+**Telemetry** in the UI. They are stored as `source=browser`, `protocol=WEB`, so they show
+up in the same Overview / Events / Attackers / Assistant views and exports.
+
+This is transparent, consent-based telemetry for devices you own or manage — not covert
+monitoring. Guardrails are enforced server-side, not just in a client:
+
+- Only `http`/`https` page URLs are accepted; other schemes are dropped.
+- URL credentials (`user:pass@`) and fragments are stripped before storage.
+- Only `url`/`title`/`ts`/`visit_type` are read; any other field a client sends is ignored,
+  so this endpoint cannot become a keystroke/form/password sink.
+- Tokens are stored only as SHA-256 hashes and can be revoked; ingest is idempotent.
+
+The **client** that sends the telemetry (e.g. a Chrome extension using `webNavigation`)
+is not included in this repository — see the Telemetry page for the exact ingest contract
+to build one against. Any such client must be installed with the user's knowledge and
+consent and must not collect page contents, form data or keystrokes.
 
 ## Security
 
@@ -116,6 +158,8 @@ idle also loads the model (~40 s). Answers keep generating and are saved even if
 | `./console.sh up` / `down` / `status` / `logs` | lifecycle |
 | `./console.sh passwd` | set a new admin password |
 | `./console.sh model` | download the assistant model (`CONSOLE_LLM_MODEL`) |
+
+New `.env` settings: `CONSOLE_OS_PORT` (9200), `CONSOLE_OS_MEM` (1500m) for the event store.
 
 Settings live in `console/.env`: `CONSOLE_PORT`, `CONSOLE_SESSION_HOURS`, and
 `CONSOLE_RETENTION_DAYS` (prunes the index only; raw logs follow the per-client rotation

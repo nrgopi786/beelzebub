@@ -51,7 +51,7 @@ function duration(a, b) {
   if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
-const PROTOS = ['SSH', 'TELNET', 'HTTP', 'TCP', 'MCP'];
+const PROTOS = ['SSH', 'TELNET', 'HTTP', 'TCP', 'MCP', 'WEB'];
 const protoClass = (p) => 'badge proto p-' + (PROTOS.includes(p) ? p : 'other');
 const protoBadge = (p) => h('span', { class: protoClass(p) }, p || '?');
 const protoColor = (p) => p === 'events' ? getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() : getComputedStyle(document.documentElement).getPropertyValue('--c-' + (PROTOS.includes(p) ? p.toLowerCase() : 'other')).trim();
@@ -94,6 +94,7 @@ async function api(path, opts = {}) {
 const state = {
   user: undefined,
   since: localStorage.getItem('since') || '24h',
+  source: localStorage.getItem('source') || '',
   client: localStorage.getItem('client') || '',
   clients: [],
   timers: [],
@@ -114,7 +115,7 @@ function route() {
 }
 function go(path, params) { location.hash = path + (params ? qs(params) : ''); }
 function clearTimers() { state.timers.forEach(clearInterval); state.timers = []; }
-function globalFilters(extra = {}) { return { since: state.since, client: state.client, ...extra }; }
+function globalFilters(extra = {}) { return { since: state.since, client: state.client, source: state.source, ...extra }; }
 
 window.addEventListener('hashchange', render);
 
@@ -129,7 +130,7 @@ function render() {
   const { parts, params } = route();
   const views = {
     overview: viewOverview, events: viewEvents, sessions: viewSessions, session: viewSession,
-    attackers: viewAttackers, ip: viewIp, xpods: viewXpods, xpod: viewXpod, audit: viewAudit, assistant: viewAssistant,
+    attackers: viewAttackers, ip: viewIp, xpods: viewXpods, xpod: viewXpod, telemetry: viewTelemetry, audit: viewAudit, assistant: viewAssistant,
   };
   const view = views[parts[0]] || viewOverview;
   const main = h('main', { class: 'main' });
@@ -149,7 +150,7 @@ function sidebar(active) {
     h('div', { class: 'brand' }, LOGO(), 'Xpods Console'),
     h('nav', { class: 'nav' },
       item('overview', 'Overview'), item('events', 'Events'), item('sessions', 'Sessions'),
-      item('attackers', 'Attackers'), item('xpods', 'Xpods'), item('assistant', 'Assistant'), item('audit', 'Audit log')),
+      item('attackers', 'Attackers'), item('xpods', 'Xpods'), item('assistant', 'Assistant'), item('telemetry', 'Telemetry'), item('audit', 'Audit log')),
     h('div', { class: 'spacer' }),
     h('div', { class: 'who' }, h('span', {}, state.user),
       h('button', { class: 'btn small', onclick: async () => { await api('/logout', { method: 'POST' }); state.user = null; render(); } }, 'Sign out')));
@@ -248,6 +249,7 @@ function timelineChart(rows, bucket, since) {
 }
 
 function eventSummary(e) {
+  if (e.source === 'browser' || e.protocol === 'WEB') return (e.title ? e.title + ' — ' : '') + (e.url || '');
   if (e.protocol === 'HTTP') return `${e.method} ${e.uri}`;
   if (e.password || (e.user && !e.command)) return `login ${e.user}:${e.password}`;
   if (e.command) return e.command;
@@ -283,7 +285,11 @@ async function viewOverview(main) {
         panel('HTTP requests', bars(s.uris, (u) => toEvents({ protocol: 'HTTP', q: u.split(' ').slice(1).join(' ') })()))),
       h('div', { class: 'grid g2' },
         panel('User agents', bars(s.agents, (a) => toEvents({ q: a })())),
-        panel('TCP service payloads', bars(s.tcp_payloads, null)))));
+        panel('TCP service payloads', bars(s.tcp_payloads, null))),
+      s.urls && s.urls.length ? h('div', { class: 'grid g2' },
+        panel('Top browsed URLs', bars(s.urls, (u) => toEvents({ source: 'browser', q: u })())),
+        panel('', h('div', { class: 'crumb', style: 'padding:8px' }, 'Browser telemetry from enrolled devices. Manage devices under ',
+          h('a', { href: '#/telemetry' }, 'Telemetry'), '.'))) : null));
 }
 
 // ------------------------------------------------------------------ events
@@ -293,6 +299,7 @@ async function viewEvents(main, _parts, params) {
   const f = { protocol: params.protocol || '', status: params.status || '', ip: params.ip || '', q: params.q || '', session: params.session || '' };
   if (params.since) state.since = params.since;
   if (params.client !== undefined) state.client = params.client;
+  if (params.source !== undefined) { state.source = params.source; localStorage.setItem("source", state.source); }
   const apply = () => go('/events', globalFilters({ ...f, q: search.value.trim(), ip: ipIn.value.trim() }));
   const search = h('input', { type: 'search', placeholder: 'Search commands, URIs, credentials, payloads…', value: f.q, onkeydown: (e) => e.key === 'Enter' && apply() });
   const ipIn = h('input', { type: 'text', placeholder: 'Source IP', value: f.ip, size: 16, onkeydown: (e) => e.key === 'Enter' && apply() });
@@ -340,8 +347,12 @@ async function showEvent(box, id) {
   const e = await api('/events/' + id);
   let raw = e.raw;
   try { raw = JSON.stringify(JSON.parse(e.raw), null, 2); } catch { /* keep raw */ }
-  const fields = [['Time', fmtTs(e.ts)], ['Xpod', e.client], ['Service', e.description], ['Status', `${e.status} — ${e.msg}`],
-    ['Source', e.src_ip ? `${e.src_ip}:${e.src_port}` : ''], ['User', e.user], ['Password', e.password], ['Command', e.command],
+  const browser = e.source === 'browser';
+  const fields = [['Time', fmtTs(e.ts)], [browser ? 'Device group' : 'Xpod', e.client],
+    ['URL', e.url], ['Page title', e.title], ['Device', e.device],
+    ['Service', e.description], ['Status', `${e.status} — ${e.msg}`],
+    ['Source', e.src_ip ? (e.src_port ? `${e.src_ip}:${e.src_port}` : e.src_ip) : ''],
+    ['User', e.user], ['Password', e.password], ['Command', e.command],
     ['Output', e.output], ['HTTP', e.method ? `${e.method} ${e.uri}` : ''], ['Host', e.host], ['User agent', e.user_agent],
     ['Body', e.body], ['Client', e.client_ver], ['TLS SNI', e.tls_sni], ['Handler', e.handler]].filter(([, v]) => v);
   box.replaceChildren(
@@ -350,8 +361,8 @@ async function showEvent(box, id) {
       e.src_ip ? h('a', { class: 'btn small', href: '#/ip/' + encodeURIComponent(e.src_ip) }, 'Investigate IP') : null,
       e.session && e.status !== 'Stateless' ? h('a', { class: 'btn small', href: '#/session/' + encodeURIComponent(e.session) }, 'Open session') : null),
     h('dl', { class: 'kv' }, fields.map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
-    h('h2', { style: 'margin-top:16px' }, 'Raw event'),
-    h('pre', { class: 'raw' }, raw));
+    raw ? h('h2', { style: 'margin-top:16px' }, 'Raw event') : null,
+    raw ? h('pre', { class: 'raw' }, raw) : null);
 }
 
 // ------------------------------------------------------------------ sessions
@@ -926,6 +937,72 @@ async function viewAssistant(main, parts, params) {
   send.onclick = sendMsg;
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
   if (state.pendingAsk) { input.value = state.pendingAsk; state.pendingAsk = null; sendMsg(); } else input.focus();
+}
+
+// ------------------------------------------------------------------ telemetry / enrollments
+
+async function viewTelemetry(main) {
+  let health = {};
+  try { health = await api('/store/status'); } catch (e) { if (e instanceof AuthError) throw e; }
+  const rows = await api('/enrollments');
+  const msg = h('div');
+  const tokenBox = h('div');
+
+  const label = h('input', { type: 'text', placeholder: 'Field Laptop 1', maxlength: 49 });
+  const create = async () => {
+    msg.replaceChildren();
+    try {
+      const r = await api('/enrollments', { method: 'POST', body: { label: label.value.trim() } });
+      label.value = '';
+      tokenBox.replaceChildren(h('div', { class: 'msg ok' },
+        h('div', {}, h('strong', {}, 'Enrollment created: '), r.label),
+        h('p', { style: 'margin:8px 0 4px' }, 'Token (shown once — copy it into the extension now):'),
+        h('pre', { class: 'raw', style: 'user-select:all' }, r.token)));
+      render();
+    } catch (e) { msg.replaceChildren(h('div', { class: 'msg err' }, e.message)); }
+  };
+
+  const storeLine = health.reachable
+    ? h('span', {}, h('span', { class: 'dot ok' }), ` Event store online — ${fmtN(health.docs)} events, cluster ${health.status}.`)
+    : h('span', {}, h('span', { class: 'dot bad' }), ' Event store unreachable.');
+
+  const origin = location.origin;
+  main.append(
+    topbar('Telemetry'),
+    h('div', { class: 'modelbar' }, storeLine),
+    h('div', { class: 'grid g2', style: 'align-items:start' },
+      h('div', { class: 'stack' },
+        panel('Enroll a device',
+          h('div', { class: 'crumb', style: 'margin-bottom:10px' },
+            'Create a token, then install the Xpods Telemetry extension on a device you own or manage and paste the token into it. ',
+            'The extension records visited page URLs only — never keystrokes, form fields or passwords — and shows a visible indicator to the user.'),
+          msg,
+          h('div', { class: 'filters' }, label, h('button', { class: 'btn primary', onclick: create }, 'Create token')),
+          tokenBox),
+        panel('Enrolled devices',
+          rows.length ? h('div', { class: 'tablewrap' }, h('table', {},
+            h('thead', {}, h('tr', {}, ['Label', 'Events', 'Last seen', 'Created by', 'Status', ''].map((t) => h('th', {}, t)))),
+            h('tbody', {}, rows.map((r) => h('tr', {},
+              h('td', {}, r.label),
+              h('td', {}, fmtN(r.event_count)),
+              h('td', { class: 'nowrap' }, r.last_seen ? ago(r.last_seen) : 'never'),
+              h('td', { class: 'crumb' }, r.created_by),
+              h('td', {}, r.revoked ? h('span', { class: 'badge state-failed' }, 'revoked') : h('span', { class: 'badge state-running' }, 'active')),
+              h('td', { style: 'text-align:right' }, r.revoked ? null : confirmButton('Revoke', async () => {
+                await api('/enrollments/' + r.id, { method: 'DELETE' }); render();
+              })))))))
+            : h('div', { class: 'empty' }, 'No devices enrolled yet.'))),
+      panel('Telemetry ingest API',
+        h('div', { class: 'md' },
+          h('div', { class: 'crumb' }, 'Any enrolled client (a browser extension you build, or an agent) sends visited URLs to this endpoint. Guardrails are enforced server-side: only http/https URLs are stored, credentials in URLs are stripped, and only url/title/ts/visit_type are read — the endpoint cannot capture keystrokes, form values or passwords.'),
+          h('h4', {}, 'Endpoint'),
+          h('pre', { class: 'raw', style: 'user-select:all' }, 'POST ' + origin + '/api/telemetry'),
+          h('h4', {}, 'Headers'),
+          h('pre', { class: 'raw', style: 'user-select:all' }, 'Authorization: Bearer <enrollment token>\nContent-Type: application/json'),
+          h('h4', {}, 'Body'),
+          h('pre', { class: 'raw', style: 'user-select:all' },
+            '{\n  "device": "chrome-win-01",\n  "events": [\n    { "url": "https://example.com/page",\n      "title": "Example",\n      "ts": 1790000000000,\n      "visit_type": "navigation" }\n  ]\n}'),
+          h('div', { class: 'crumb' }, 'ts accepts epoch ms or ISO-8601. Up to 500 events per POST; retries are idempotent. For remote devices, expose the console over HTTPS behind your reverse proxy or VPN and use that URL.')))));
 }
 
 // ------------------------------------------------------------------ audit
