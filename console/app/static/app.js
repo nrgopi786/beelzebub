@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Honeypot Console frontend. Dependency-free.
+ * Xpods Console frontend. Dependency-free.
  * SECURITY: every string shown here may be attacker-controlled (usernames, commands,
  * URIs, user agents...). Build DOM only through h(), which uses text nodes; never
  * assign innerHTML with data.
@@ -122,7 +122,7 @@ function render() {
   const { parts, params } = route();
   const views = {
     overview: viewOverview, events: viewEvents, sessions: viewSessions, session: viewSession,
-    attackers: viewAttackers, ip: viewIp, honeypots: viewHoneypots, honeypot: viewHoneypot, audit: viewAudit,
+    attackers: viewAttackers, ip: viewIp, xpods: viewHoneypots, xpod: viewHoneypot, audit: viewAudit,
   };
   const view = views[parts[0]] || viewOverview;
   const main = h('main', { class: 'main' });
@@ -137,12 +137,12 @@ const LOGO = () => h('svg', { viewBox: '0 0 32 32' },
   h('polygon', { points: '16,9 22,12.5 22,19.5 16,23 10,19.5 10,12.5', style: 'fill:var(--panel)' }));
 
 function sidebar(active) {
-  const item = (id, label) => h('a', { href: '#/' + id, class: active === id || (active === 'session' && id === 'sessions') || (active === 'ip' && id === 'attackers') || (active === 'honeypot' && id === 'honeypots') ? 'active' : '' }, label);
+  const item = (id, label) => h('a', { href: '#/' + id, class: active === id || (active === 'session' && id === 'sessions') || (active === 'ip' && id === 'attackers') || (active === 'xpod' && id === 'xpods') ? 'active' : '' }, label);
   return h('aside', { class: 'side' },
-    h('div', { class: 'brand' }, LOGO(), 'Honeypot Console'),
+    h('div', { class: 'brand' }, LOGO(), 'Xpods Console'),
     h('nav', { class: 'nav' },
       item('overview', 'Overview'), item('events', 'Events'), item('sessions', 'Sessions'),
-      item('attackers', 'Attackers'), item('honeypots', 'Honeypots'), item('audit', 'Audit log')),
+      item('attackers', 'Attackers'), item('xpods', 'Xpods'), item('audit', 'Audit log')),
     h('div', { class: 'spacer' }),
     h('div', { class: 'who' }, h('span', {}, state.user),
       h('button', { class: 'btn small', onclick: async () => { await api('/logout', { method: 'POST' }); state.user = null; render(); } }, 'Sign out')));
@@ -166,7 +166,7 @@ function globalControls(onChange) {
     onclick: () => { state.since = r; localStorage.setItem('since', r); onChange(); },
   }, r)));
   const sel = h('select', { onchange: (e) => { state.client = e.target.value; localStorage.setItem('client', state.client); onChange(); } },
-    h('option', { value: '' }, 'All honeypots'),
+    h('option', { value: '' }, 'All Xpods'),
     state.clients.map((c) => h('option', { value: c.name, selected: c.name === state.client }, c.name)));
   return [sel, seg];
 }
@@ -266,7 +266,7 @@ async function viewOverview(main) {
       h('div', { class: 'grid g3' },
         panel('Top source IPs', bars(s.ips, (ip) => go('/ip/' + encodeURIComponent(ip)))),
         panel('By protocol', bars(s.protocols, (p) => toEvents({ protocol: p })())),
-        panel('By honeypot', bars(s.clients, (c) => { state.client = c; localStorage.setItem('client', c); refresh(); }))),
+        panel('By Xpod', bars(s.clients, (c) => { state.client = c; localStorage.setItem('client', c); refresh(); }))),
       h('div', { class: 'grid g3' },
         panel('Credentials tried', bars(s.credentials, (c) => toEvents({ q: c.split(' : ')[1] || c })())),
         panel('Usernames', bars(s.users, (u) => toEvents({ q: u })())),
@@ -308,7 +308,7 @@ async function viewEvents(main, _parts, params) {
   const moreBox = h('div', { class: 'more' });
   main.append(h('div', { class: 'split' },
     h('div', { class: 'panel', style: 'padding:0' }, h('div', { class: 'tablewrap' }, h('table', {},
-      h('thead', {}, h('tr', {}, ['Time', 'Honeypot', 'Protocol', 'Source', 'Activity'].map((t) => h('th', {}, t)))), tbody)), moreBox),
+      h('thead', {}, h('tr', {}, ['Time', 'Xpod', 'Protocol', 'Source', 'Activity'].map((t) => h('th', {}, t)))), tbody)), moreBox),
     detail));
 
   let selected = null;
@@ -333,7 +333,7 @@ async function showEvent(box, id) {
   const e = await api('/events/' + id);
   let raw = e.raw;
   try { raw = JSON.stringify(JSON.parse(e.raw), null, 2); } catch { /* keep raw */ }
-  const fields = [['Time', fmtTs(e.ts)], ['Honeypot', e.client], ['Service', e.description], ['Status', `${e.status} — ${e.msg}`],
+  const fields = [['Time', fmtTs(e.ts)], ['Xpod', e.client], ['Service', e.description], ['Status', `${e.status} — ${e.msg}`],
     ['Source', e.src_ip ? `${e.src_ip}:${e.src_port}` : ''], ['User', e.user], ['Password', e.password], ['Command', e.command],
     ['Output', e.output], ['HTTP', e.method ? `${e.method} ${e.uri}` : ''], ['Host', e.host], ['User agent', e.user_agent],
     ['Body', e.body], ['Client', e.client_ver], ['TLS SNI', e.tls_sni], ['Handler', e.handler]].filter(([, v]) => v);
@@ -358,7 +358,7 @@ async function viewSessions(main, _parts, params) {
   main.append(topbar('Sessions', ...globalControls(render)), h('div', { class: 'filters' }, proto));
   const rows = await api('/sessions' + qs({ ...globalFilters(f), limit: 300 }));
   main.append(h('div', { class: 'panel', style: 'padding:0' }, h('div', { class: 'tablewrap' }, h('table', {},
-    h('thead', {}, h('tr', {}, ['Started', 'Duration', 'Honeypot', 'Protocol', 'Source', 'User', 'Service', 'Interactions'].map((t) => h('th', {}, t)))),
+    h('thead', {}, h('tr', {}, ['Started', 'Duration', 'Xpod', 'Protocol', 'Source', 'User', 'Service', 'Interactions'].map((t) => h('th', {}, t)))),
     h('tbody', {}, rows.length ? rows.map((s) => h('tr', { class: 'click', onclick: () => go('/session/' + encodeURIComponent(s.session)) },
       h('td', { class: 'nowrap mono' }, fmtTs(s.start)), h('td', { class: 'nowrap' }, duration(s.start, s.end)),
       h('td', {}, s.client), h('td', {}, protoBadge(s.protocol)), h('td', { class: 'mono' }, s.src_ip || '—'),
@@ -378,7 +378,7 @@ async function viewSession(main, parts) {
     topbar(`${first.protocol} session`, ip ? h('a', { class: 'btn', href: '#/ip/' + encodeURIComponent(ip) }, 'Investigate ' + ip) : null,
       h('a', { class: 'btn', href: '#/events' + qs({ session: id, since: 'all' }) }, 'Show as events')),
     h('div', { class: 'kpis' },
-      [['Honeypot', first.client], ['Service', first.description || first.protocol], ['Source', ip || '—'],
+      [['Xpod', first.client], ['Service', first.description || first.protocol], ['Source', ip || '—'],
         ['Started', fmtTs(first.ts)], ['Duration', duration(first.ts, rows[rows.length - 1].ts)],
         ['Interactions', rows.filter((r) => r.status === 'Interaction').length]]
         .map(([l, v]) => h('div', { class: 'kpi' }, h('div', { class: 'v', style: 'font-size:15px' }, v), h('div', { class: 'l' }, l)))));
@@ -404,7 +404,7 @@ async function viewAttackers(main) {
   main.append(topbar('Attackers', ...globalControls(render)));
   const rows = await api('/attackers' + qs(globalFilters({ limit: 500 })));
   main.append(h('div', { class: 'panel', style: 'padding:0' }, h('div', { class: 'tablewrap' }, h('table', {},
-    h('thead', {}, h('tr', {}, ['Source IP', 'Events', 'Protocols', 'Honeypots', 'Logins', 'First seen', 'Last seen', 'Tags'].map((t) => h('th', {}, t)))),
+    h('thead', {}, h('tr', {}, ['Source IP', 'Events', 'Protocols', 'Xpods', 'Logins', 'First seen', 'Last seen', 'Tags'].map((t) => h('th', {}, t)))),
     h('tbody', {}, rows.length ? rows.map((r) => h('tr', { class: 'click', onclick: () => go('/ip/' + encodeURIComponent(r.ip)) },
       h('td', { class: 'mono' }, r.ip), h('td', {}, fmtN(r.events)),
       h('td', {}, (r.protocol_list || '').split(',').filter(Boolean).map(protoBadge).flatMap((b) => [b, ' '])),
@@ -447,14 +447,14 @@ async function viewIp(main, parts) {
         panel('Activity by day', timelineChart(p.activity.map((a) => ({ ...a, protocol: 'events' })), 'day'))),
       h('div', { class: 'grid g3' },
         panel('Protocols', bars(p.protocols, (x) => toEvents({ protocol: x })())),
-        panel('Honeypots targeted', bars(p.clients)),
+        panel('Xpods targeted', bars(p.clients)),
         panel('Client software', bars([...p.clients_ver, ...p.agents]))),
       h('div', { class: 'grid g3' },
         panel('Credentials', bars(p.credentials)),
         panel('Commands', bars(p.commands, (c) => toEvents({ q: c })())),
         panel('HTTP requests', bars(p.uris))),
       panel('Sessions', p.sessions.length ? h('div', { class: 'tablewrap' }, h('table', {},
-        h('thead', {}, h('tr', {}, ['Started', 'Duration', 'Honeypot', 'Protocol', 'User', 'Interactions'].map((t) => h('th', {}, t)))),
+        h('thead', {}, h('tr', {}, ['Started', 'Duration', 'Xpod', 'Protocol', 'User', 'Interactions'].map((t) => h('th', {}, t)))),
         h('tbody', {}, p.sessions.map((x) => h('tr', { class: 'click', onclick: () => go('/session/' + encodeURIComponent(x.session)) },
           h('td', { class: 'mono nowrap' }, fmtTs(x.start)), h('td', {}, duration(x.start, x.end)), h('td', {}, x.client),
           h('td', {}, protoBadge(x.protocol)), h('td', { class: 'mono' }, x.user), h('td', {}, fmtN(x.interactions)))))))
@@ -511,10 +511,10 @@ async function viewHoneypots(main) {
     e.preventDefault();
     try {
       await api('/clients', { method: 'POST', body: { name: name.value.trim(), domain: domain.value.trim(), hostname: host.value.trim() } });
-      go('/honeypot/' + encodeURIComponent(name.value.trim()));
+      go('/xpod/' + encodeURIComponent(name.value.trim()));
     } catch (err) { msg.replaceChildren(h('div', { class: 'msg err' }, err.message)); }
   } },
-  h('h3', {}, 'New honeypot'), msg,
+  h('h3', {}, 'New Xpod'), msg,
   h('div', { class: 'form' },
     h('label', {}, 'Client name'), name, h('div', { class: 'hint' }, 'lowercase letters, digits, dashes'),
     h('label', {}, 'Domain (A record)'), domain,
@@ -522,9 +522,9 @@ async function viewHoneypots(main) {
     h('span'), h('div', { class: 'actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Create'),
       h('button', { class: 'btn', type: 'button', onclick: () => { newForm.hidden = true; } }, 'Cancel'))));
 
-  main.append(topbar('Honeypots', h('button', { class: 'btn primary', onclick: () => { newForm.hidden = false; name.focus(); } }, '+ New honeypot')), newForm);
+  main.append(topbar('Xpods', h('button', { class: 'btn primary', onclick: () => { newForm.hidden = false; name.focus(); } }, '+ New Xpod')), newForm);
   if (!clients.length) {
-    main.append(h('div', { class: 'panel empty' }, 'No honeypots configured yet. Create one to get started.'));
+    main.append(h('div', { class: 'panel empty' }, 'No Xpods configured yet. Create one to get started.'));
     return;
   }
   const cards = h('div', { class: 'cards', style: 'margin-top:16px' });
@@ -533,7 +533,7 @@ async function viewHoneypots(main) {
     const act = (a) => runAction(c.name, a, out, () => render());
     const running = c.state === 'running';
     cards.append(h('div', { class: 'panel card' },
-      h('h3', {}, h('a', { href: '#/honeypot/' + encodeURIComponent(c.name) }, c.name), stateBadge(c.job ? 'busy' : c.state)),
+      h('h3', {}, h('a', { href: '#/xpod/' + encodeURIComponent(c.name) }, c.name), stateBadge(c.job ? 'busy' : c.state)),
       h('div', { class: 'meta' }, c.domain, ' · ', c.hostname, ' · bind ', c.bind_ip),
       h('div', {}, c.services.map((s) => h('span', { class: 'chip' }, s))),
       h('div', { class: 'stats' },
@@ -544,7 +544,7 @@ async function viewHoneypots(main) {
         h('button', { class: 'btn small primary', disabled: !!c.job, onclick: () => act('up') }, running ? 'Redeploy' : 'Deploy'),
         running ? h('button', { class: 'btn small', disabled: !!c.job, onclick: () => act('restart') }, 'Restart') : null,
         running ? confirmButton('Stop', () => act('down')) : null,
-        h('a', { class: 'btn small', href: '#/honeypot/' + encodeURIComponent(c.name) }, 'Configure'),
+        h('a', { class: 'btn small', href: '#/xpod/' + encodeURIComponent(c.name) }, 'Configure'),
         h('a', { class: 'btn small', href: '#/events' + qs({ client: c.name, since: '24h' }) }, 'Events')),
       out));
     if (c.job) followJob(c.job, out, () => render());
@@ -587,7 +587,7 @@ async function viewHoneypot(main, parts) {
   };
 
   main.append(
-    h('div', { class: 'crumb' }, h('a', { href: '#/honeypots' }, 'Honeypots'), ' / ', name),
+    h('div', { class: 'crumb' }, h('a', { href: '#/xpods' }, 'Xpods'), ' / ', name),
     topbar(name, stateBadge(c.job ? 'busy' : running ? 'running' : (c.containers[0]?.state || 'not deployed')),
       h('button', { class: 'btn primary', onclick: () => act('up') }, running ? 'Redeploy' : 'Deploy'),
       h('button', { class: 'btn', onclick: () => act('validate') }, 'Validate'),
@@ -598,7 +598,7 @@ async function viewHoneypot(main, parts) {
     h('div', { class: 'grid g2', style: 'margin-top:16px;align-items:start' },
       h('div', { class: 'stack' },
         panel('Settings', msg, h('div', { class: 'form' },
-          row('Domain', text('HP_DOMAIN'), 'the A record pointing at this honeypot'),
+          row('Domain', text('HP_DOMAIN'), 'the A record pointing at this Xpod'),
           row('Fake hostname', text('HP_HOSTNAME')),
           row('Bind IP', text('HP_BIND_IP'), '0.0.0.0 = all interfaces; use a dedicated public IP per client'),
           row('TLS', select('HP_TLS', ['selfsigned', 'letsencrypt'])),
@@ -656,7 +656,7 @@ function customLures(client, files) {
 function firewallPanel(client) {
   const pre = h('pre', { class: 'console', hidden: true });
   return panel('Egress lockdown',
-    h('div', { class: 'crumb', style: 'margin-bottom:10px' }, 'iptables rules that stop the honeypot from opening outbound connections. Review and apply them on the host as root.'),
+    h('div', { class: 'crumb', style: 'margin-bottom:10px' }, 'iptables rules that stop the Xpod from opening outbound connections. Review and apply them on the host as root.'),
     h('button', { class: 'btn small', onclick: async () => {
       const r = await api(`/clients/${encodeURIComponent(client)}/firewall`);
       pre.hidden = false; pre.textContent = r.output;
@@ -682,7 +682,7 @@ function renderLogin() {
   const user = h('input', { type: 'text', placeholder: 'Username', autocomplete: 'username', required: true, value: 'admin' });
   const pass = h('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password', required: true });
   $app().replaceChildren(h('div', { class: 'login' }, h('div', { class: 'panel' },
-    h('div', { class: 'brand' }, LOGO(), 'Honeypot Console'),
+    h('div', { class: 'brand' }, LOGO(), 'Xpods Console'),
     h('form', { onsubmit: async (e) => {
       e.preventDefault();
       try {
