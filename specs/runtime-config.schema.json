@@ -95,6 +95,10 @@
       "type": "string",
       "description": "Path to TLS private key file. Must be paired with tlsCertPath."
     },
+    "hostKeyPath": {
+      "type": "string",
+      "description": "SSH only. Path to a PEM host private key; generated (ed25519) if missing so the fingerprint is stable across restarts."
+    },
     "commands": {
       "type": "array",
       "items": {

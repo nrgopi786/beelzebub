@@ -29,6 +29,16 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 		sshStrategy.Sessions = historystore.NewHistoryStore()
 	}
 	go sshStrategy.Sessions.HistoryCleaner()
+
+	var hostSigner ssh.Signer
+	if servConf.HostKeyPath != "" {
+		signer, err := loadOrCreateHostKey(servConf.HostKeyPath)
+		if err != nil {
+			return err
+		}
+		hostSigner = signer
+	}
+
 	go func() {
 		server := &ssh.Server{
 			Addr:        servConf.Address,
@@ -202,6 +212,9 @@ func (sshStrategy *SSHStrategy) Init(servConf parser.BeelzebubServiceConfigurati
 				}
 				return matched
 			},
+		}
+		if hostSigner != nil {
+			server.AddHostKey(hostSigner)
 		}
 		err := server.ListenAndServe()
 		if err != nil {

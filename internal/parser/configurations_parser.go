@@ -89,6 +89,10 @@ type BeelzebubServiceConfiguration struct {
 	Plugin                 Plugin    `yaml:"plugin" json:"plugin,omitempty"`
 	TLSCertPath            string    `yaml:"tlsCertPath" json:"tlsCertPath,omitempty"`
 	TLSKeyPath             string    `yaml:"tlsKeyPath" json:"tlsKeyPath,omitempty"`
+	// HostKeyPath is the PEM-encoded SSH host private key. When the file does
+	// not exist an ed25519 key is generated and written there, so the server
+	// fingerprint stays stable across restarts. Empty means an ephemeral key.
+	HostKeyPath string `yaml:"hostKeyPath,omitempty" json:"hostKeyPath,omitempty"`
 	// MaxHistory caps how many session history entries are kept for LLM context
 	// on interactive TCP sessions. Zero means use the built-in
 	// default of 20 entries.

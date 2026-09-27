@@ -8,6 +8,7 @@
     },
     {
       "properties": {
+        "hostKeyPath": false,
         "protocol": {
           "const": "tcp"
         },

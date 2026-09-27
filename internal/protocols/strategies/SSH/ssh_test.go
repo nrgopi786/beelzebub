@@ -1,6 +1,8 @@
 package SSH
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/beelzebub-labs/beelzebub/v3/internal/parser"
@@ -82,4 +84,40 @@ func TestSSHStrategy_Init_InvalidAddress(t *testing.T) {
 
 	// SSH runs the listener asynchronously; Init itself should not return an error.
 	assert.NoError(t, strategy.Init(servConf, mt))
+}
+
+func TestLoadOrCreateHostKey_PersistsKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys", "ssh_host_ed25519_key")
+
+	first, err := loadOrCreateHostKey(path)
+	assert.NoError(t, err)
+	assert.Equal(t, "ssh-ed25519", first.PublicKey().Type())
+
+	info, err := os.Stat(path)
+	assert.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	second, err := loadOrCreateHostKey(path)
+	assert.NoError(t, err)
+	assert.Equal(t, first.PublicKey().Marshal(), second.PublicKey().Marshal())
+}
+
+func TestLoadOrCreateHostKey_InvalidKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad_key")
+	assert.NoError(t, os.WriteFile(path, []byte("not a key"), 0o600))
+
+	_, err := loadOrCreateHostKey(path)
+	assert.Error(t, err)
+}
+
+func TestSSHStrategy_Init_InvalidHostKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad_key")
+	assert.NoError(t, os.WriteFile(path, []byte("not a key"), 0o600))
+
+	servConf := parser.BeelzebubServiceConfiguration{
+		Address:       "127.0.0.1:0",
+		PasswordRegex: ".*",
+		HostKeyPath:   path,
+	}
+	assert.Error(t, (&SSHStrategy{}).Init(servConf, &mockTracer{}))
 }

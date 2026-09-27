@@ -11,6 +11,7 @@
         "commands"
       ],
       "properties": {
+        "hostKeyPath": false,
         "maxHistory": false,
         "wireEncoding": false,
         "framing": false,
