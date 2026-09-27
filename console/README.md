@@ -27,6 +27,16 @@ cd console
 - **Export**: CSV or NDJSON of any filtered view, and a plain IP list for blocklists or
   IOC feeds.
 
+**Assistant (local LLM)**
+- A chat assistant backed by a local model (Ollama, default `qwen2.5:3b`) running in the same
+  compose stack. No event data leaves the host.
+- It answers from live data through read-only tools: overview stats, event search, sessions and
+  transcripts, attacker lists, IP profiles, Xpod status, config validation and the audit log.
+  Every tool call is shown in the chat and can be expanded to see the exact data it returned.
+- It can **propose** changes (deploy, restart, stop, settings, new Xpod, IP notes). Nothing runs
+  until you click Approve on the proposal card. Settings proposals show an `old → new` diff.
+- "Ask assistant" buttons on the overview, IP and session pages start a pre-filled investigation.
+
 **Management** (every action runs `deploy/deploy.sh`, so the CLI and the UI never drift)
 - Create Xpods; edit domain, fake hostname, bind IP, services, TLS, resources,
   log rotation and shipping.
@@ -41,6 +51,7 @@ cd console
 ```
 console container (host netns, 127.0.0.1:8088)
  ├─ FastAPI + SQLite (console/data/console.db)
+ ├─ assistant ──► ollama container (127.0.0.1:11500, models in a named volume)
  ├─ ingester: tails deploy/clients/*/data/logs/beelzebub.log + rotated *.gz every 3s
  └─ docker CLI + deploy.sh ──► /var/run/docker.sock ──► hp-<client> stacks
 ```
@@ -76,12 +87,35 @@ displays attacker-controlled strings. It is built accordingly:
 extra authentication (set `CONSOLE_HOST`, and `CONSOLE_COOKIE_SECURE=true` behind
 HTTPS). Never expose it directly on an Xpod host's public IP.
 
+### Assistant safety
+
+Everything the assistant analyses was written by attackers, so its context is attacker-controlled
+(prompt injection). The design assumes the model *will* be manipulated sometimes:
+
+- Read-only tools run freely. Write tools only create a pending action that a human must approve.
+  Actions are single-use, bound to the user, and expire after 30 minutes. Approvals and rejections
+  are audited.
+- Proposed arguments are validated before a card is shown, so invalid or no-op changes go back to
+  the model as errors instead of reaching you.
+- Tool results are scanned for text aimed at AI assistants ("ignore previous instructions", tool
+  names...). A match raises a warning in the chat, and every later proposal in that conversation
+  is flagged **possible prompt injection** and needs a second click to approve.
+- Model output is rendered as text only, the same as event data.
+
+Small CPU models are imperfect. Treat answers as a starting point, check them against the linked
+data, and never approve an action you didn't ask for. With a GPU, set a stronger model in `.env`
+(`CONSOLE_LLM_MODEL`, e.g. `qwen2.5:14b`), then run `./console.sh model` and `./console.sh up`.
+
+On this host's CPU (8 vCPU, no GPU) expect about a minute per answer: the first request after
+idle also loads the model (~40 s). Answers keep generating and are saved even if you navigate away.
+
 ## Operations
 
 | Command | |
 |---|---|
 | `./console.sh up` / `down` / `status` / `logs` | lifecycle |
 | `./console.sh passwd` | set a new admin password |
+| `./console.sh model` | download the assistant model (`CONSOLE_LLM_MODEL`) |
 
 Settings live in `console/.env`: `CONSOLE_PORT`, `CONSOLE_SESSION_HOURS`, and
 `CONSOLE_RETENTION_DAYS` (prunes the index only; raw logs follow the per-client rotation

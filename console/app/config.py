@@ -15,3 +15,6 @@ COOKIE_SECURE = os.environ.get("CONSOLE_COOKIE_SECURE", "false").lower() == "tru
 SESSION_HOURS = int(os.environ.get("CONSOLE_SESSION_HOURS", "12"))
 RETENTION_DAYS = int(os.environ.get("CONSOLE_RETENTION_DAYS", "0"))
 INGEST_INTERVAL = float(os.environ.get("CONSOLE_INGEST_INTERVAL", "3"))
+
+LLM_URL = os.environ.get("CONSOLE_LLM_URL", f"http://127.0.0.1:{os.environ.get('CONSOLE_LLM_PORT', '11500')}")
+LLM_MODEL = os.environ.get("CONSOLE_LLM_MODEL", "qwen2.5:3b")

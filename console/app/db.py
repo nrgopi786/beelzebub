@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS ip_notes (
     ip TEXT PRIMARY KEY, tags TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
     updated TEXT NOT NULL, updated_by TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS assistant_conversations (
+    id TEXT PRIMARY KEY, user TEXT NOT NULL, title TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS assistant_messages (
+    id INTEGER PRIMARY KEY, conv_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL,
+    meta TEXT NOT NULL DEFAULT '{}', created TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_assistant_messages_conv ON assistant_messages(conv_id, id);
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY, ts TEXT NOT NULL, user TEXT NOT NULL,
     action TEXT NOT NULL, target TEXT NOT NULL, detail TEXT NOT NULL DEFAULT ''

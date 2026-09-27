@@ -129,7 +129,7 @@ function render() {
   const { parts, params } = route();
   const views = {
     overview: viewOverview, events: viewEvents, sessions: viewSessions, session: viewSession,
-    attackers: viewAttackers, ip: viewIp, xpods: viewXpods, xpod: viewXpod, audit: viewAudit,
+    attackers: viewAttackers, ip: viewIp, xpods: viewXpods, xpod: viewXpod, audit: viewAudit, assistant: viewAssistant,
   };
   const view = views[parts[0]] || viewOverview;
   const main = h('main', { class: 'main' });
@@ -149,7 +149,7 @@ function sidebar(active) {
     h('div', { class: 'brand' }, LOGO(), 'Xpods Console'),
     h('nav', { class: 'nav' },
       item('overview', 'Overview'), item('events', 'Events'), item('sessions', 'Sessions'),
-      item('attackers', 'Attackers'), item('xpods', 'Xpods'), item('audit', 'Audit log')),
+      item('attackers', 'Attackers'), item('xpods', 'Xpods'), item('assistant', 'Assistant'), item('audit', 'Audit log')),
     h('div', { class: 'spacer' }),
     h('div', { class: 'who' }, h('span', {}, state.user),
       h('button', { class: 'btn small', onclick: async () => { await api('/logout', { method: 'POST' }); state.user = null; render(); } }, 'Sign out')));
@@ -259,7 +259,7 @@ function eventSummary(e) {
 async function viewOverview(main) {
   await loadClients();
   const refresh = () => render();
-  main.append(topbar('Overview', ...globalControls(refresh)));
+  main.append(topbar('Overview', h('button', { class: 'btn', onclick: () => askAssistant(`Summarize attack activity for the last ${state.since}${state.client ? ' on Xpod ' + state.client : ''} and highlight anything that needs attention.`) }, 'Ask assistant'), ...globalControls(refresh)));
   const s = await api('/stats' + qs(globalFilters()));
   const k = s.kpi;
   const toEvents = (extra) => () => go('/events', globalFilters(extra));
@@ -382,7 +382,7 @@ async function viewSession(main, parts) {
   const interactive = ['SSH', 'TELNET'].includes(first.protocol);
   main.append(
     h('div', { class: 'crumb' }, h('a', { href: '#/sessions' }, 'Sessions'), ' / ', id),
-    topbar(`${first.protocol} session`, ip ? h('a', { class: 'btn', href: '#/ip/' + encodeURIComponent(ip) }, 'Investigate ' + ip) : null,
+    topbar(`${first.protocol} session`, h('button', { class: 'btn primary', onclick: () => askAssistant(`Explain session ${id}: what did the attacker try to do?`) }, 'Explain with assistant'), ip ? h('a', { class: 'btn', href: '#/ip/' + encodeURIComponent(ip) }, 'Investigate ' + ip) : null,
       h('a', { class: 'btn', href: '#/events' + qs({ session: id, since: 'all' }) }, 'Show as events')),
     h('div', { class: 'kpis' },
       [['Xpod', first.client], ['Service', first.description || first.protocol], ['Source', ip || '—'],
@@ -441,7 +441,8 @@ async function viewIp(main, parts) {
   const toEvents = (extra) => () => go('/events', { since: 'all', ip, ...extra });
   main.append(
     h('div', { class: 'crumb' }, h('a', { href: '#/attackers' }, 'Attackers'), ' / ', ip),
-    topbar(ip, h('a', { class: 'btn', href: '#/events' + qs({ ip, since: 'all' }) }, 'All events'),
+    topbar(ip, h('button', { class: 'btn primary', onclick: () => askAssistant(`Investigate ${ip}: what did it do, what is its likely intent, and what should we do about it?`) }, 'Ask assistant'),
+      h('a', { class: 'btn', href: '#/events' + qs({ ip, since: 'all' }) }, 'All events'),
       h('a', { class: 'btn', href: '/api/export' + qs({ ip, since: 'all', format: 'csv' }) }, 'Export CSV')),
     h('div', { class: 'kpis' },
       [['Events', fmtN(s.events)], ['Sessions', fmtN(s.sessions)], ['Login attempts', fmtN(s.logins)], ['First seen', fmtTs(s.first)], ['Last seen', fmtTs(s.last)]]
@@ -668,6 +669,263 @@ function firewallPanel(client) {
       const r = await api(`/clients/${encodeURIComponent(client)}/firewall`);
       pre.hidden = false; pre.textContent = r.output;
     } }, 'Show rules'), pre);
+}
+
+// ------------------------------------------------------------------ assistant
+
+function askAssistant(prompt) { go('/assistant', { ask: prompt }); }
+
+// Minimal, safe markdown: code fences, lists, headings, **bold**, `code`; IPs become links.
+function mdInline(text) {
+  const out = [];
+  const re = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\b(?:\d{1,3}\.){3}\d{1,3}\b)/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const t = m[0];
+    if (t.startsWith('**')) out.push(h('strong', {}, t.slice(2, -2)));
+    else if (t.startsWith('`')) out.push(h('code', {}, t.slice(1, -1)));
+    else out.push(h('a', { href: '#/ip/' + encodeURIComponent(t) }, t));
+    last = m.index + t.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function renderMd(text) {
+  const root = h('div', { class: 'md' });
+  const parts = text.split(/```[\w-]*\n?/);
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) { root.append(h('pre', { class: 'raw' }, part.replace(/\n$/, ''))); return; }
+    let list = null, para = [];
+    const flush = () => { if (para.length) { root.append(h('p', {}, para.flatMap((l, j) => j ? [h('br'), ...mdInline(l)] : mdInline(l)))); para = []; } };
+    for (const line of part.split('\n')) {
+      const li = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+      const hd = line.match(/^#{1,4}\s+(.*)$/);
+      if (li) {
+        flush();
+        if (!list) { list = h(/^\s*\d/.test(line) ? 'ol' : 'ul'); root.append(list); }
+        list.append(h('li', {}, mdInline(li[1])));
+      } else if (hd) { flush(); list = null; root.append(h('h4', {}, mdInline(hd[1]))); }
+      else if (!line.trim()) { flush(); list = null; }
+      else { list = null; para.push(line); }
+    }
+    flush();
+  });
+  return root;
+}
+
+function toolLabel(name, args) {
+  const a = Object.entries(args || {}).filter(([k, v]) => k !== 'diff' && v !== '' && v !== null && v !== undefined)
+    .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ');
+  return `${name}${a ? ' · ' + a : ''}`;
+}
+
+function toolChip(name, args, content, done = true) {
+  const chip = h('details', { class: 'toolchip' + (done ? ' done' : '') },
+    h('summary', {}, h('span', { class: 'dot' }), toolLabel(name, args)));
+  if (content !== undefined) {
+    let pretty = content;
+    try { pretty = JSON.stringify(JSON.parse(content).untrusted_data, null, 2); } catch { /* raw */ }
+    chip.append(h('pre', { class: 'raw' }, pretty));
+  }
+  return chip;
+}
+
+function confirmCard(meta) {
+  const body = h('div');
+  const out = h('pre', { class: 'console', hidden: true });
+  const status = h('span', { class: 'badge state-other' }, meta.status);
+  const setStatus = (s) => {
+    status.textContent = s;
+    status.className = 'badge ' + (s === 'approved' ? 'state-running' : s === 'pending' ? 'state-other' : 'state-failed');
+  };
+  setStatus(meta.status);
+  const decide = async (approve) => {
+    buttons.replaceChildren(h('span', { class: 'crumb' }, approve ? 'Running…' : 'Rejecting…'));
+    try {
+      const r = await api('/assistant/actions/' + meta.id, { method: 'POST', body: { approve } });
+      setStatus(r.status);
+      buttons.replaceChildren();
+      if (r.error) body.append(h('div', { class: 'msg err' }, r.error));
+      if (r.changed) body.append(h('div', { class: 'msg ok' }, r.changed.length ? `Changed: ${r.changed.join(', ')}. Redeploy to apply.` : 'No changes were needed.'));
+      if (r.job) followJob(r.job, out, () => {});
+      state.clients = [];
+    } catch (e) { buttons.replaceChildren(h('div', { class: 'msg err' }, e.message)); }
+  };
+  const buttons = h('div', { class: 'actions' });
+  if (meta.status === 'pending') {
+    buttons.append(meta.suspicious ? confirmButton('Approve', () => decide(true), 'btn small danger')
+      : h('button', { class: 'btn small primary', onclick: () => decide(true) }, 'Approve'),
+    h('button', { class: 'btn small', onclick: () => decide(false) }, 'Reject'));
+  }
+  if (meta.result?.error) body.append(h('div', { class: 'msg err' }, meta.result.error));
+  return h('div', { class: 'confirm' },
+    h('div', { class: 'confirm-head' }, h('strong', {}, 'Action proposed by the assistant'), status),
+    h('div', { class: 'confirm-desc' }, meta.description),
+    meta.suspicious ? h('div', { class: 'msg err' }, 'Possible prompt injection: this conversation read attacker data containing instructions aimed at the assistant. Only approve if you asked for this yourself.') : null,
+    h('div', { class: 'crumb' }, 'Review before approving: the assistant reads attacker-controlled data and can be manipulated.'),
+    buttons, body, out);
+}
+
+async function modelPanel() {
+  const box = h('div', { class: 'modelbar' });
+  let st;
+  try { st = await api('/assistant/status'); } catch (e) { if (e instanceof AuthError) throw e; st = { reachable: false }; }
+  const dot = (ok) => h('span', { class: 'dot ' + (ok ? 'ok' : 'bad') });
+  if (!st.reachable) {
+    box.append(dot(false), h('span', {}, 'Local LLM unreachable. Start it with ', h('code', {}, 'cd console && ./console.sh up'), '.'));
+  } else if (!st.installed) {
+    const prog = h('span', { class: 'crumb' });
+    const btn = h('button', { class: 'btn small primary', onclick: async () => {
+      btn.disabled = true;
+      const res = await fetch('/api/assistant/pull', { method: 'POST', credentials: 'same-origin', headers: { 'X-Requested-With': 'console' } });
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const l of lines) {
+          try {
+            const j = JSON.parse(l);
+            prog.textContent = j.error ? 'error: ' + j.error : j.total ? `${j.status} ${Math.round(100 * (j.completed || 0) / j.total)}%` : j.status;
+          } catch { /* partial */ }
+        }
+      }
+      render();
+    } }, `Download ${st.model}`);
+    box.append(dot(false), h('span', {}, `Model ${st.model} is not installed.`), btn, prog);
+  } else {
+    box.append(dot(true), h('span', {}, 'Local model ', h('code', {}, st.model), ' ready — runs on this host, no data leaves it.'));
+  }
+  return box;
+}
+
+const SUGGESTIONS = [
+  'Summarize attack activity in the last 24 hours',
+  'Which credentials are attackers trying most?',
+  'Investigate the most active attacker',
+  'Did anyone try to download malware in a shell?',
+  'Are all Xpods healthy?',
+];
+
+async function viewAssistant(main, parts, params) {
+  if (params.ask) {
+    const { id } = await api('/assistant/conversations', { method: 'POST', body: { title: params.ask } });
+    state.pendingAsk = params.ask;
+    history.replaceState(null, '', '#/assistant/' + id);
+    parts = [id];
+  }
+  const convId = parts[0];
+  const convs = await api('/assistant/conversations');
+  const list = h('div', { class: 'convlist' },
+    h('button', { class: 'btn primary', style: 'width:100%', onclick: async () => {
+      const { id } = await api('/assistant/conversations', { method: 'POST', body: {} }); go('/assistant/' + id);
+    } }, '+ New chat'),
+    convs.map((c) => h('div', { class: 'conv' + (c.id === convId ? ' active' : '') },
+      h('a', { href: '#/assistant/' + c.id, title: c.title }, c.title),
+      h('button', { class: 'x', title: 'Delete', onclick: async () => {
+        await api('/assistant/conversations/' + c.id, { method: 'DELETE' });
+        go('/assistant' + (c.id === convId ? '' : '/' + convId));
+        if (c.id !== convId) render();
+      } }, '×'))));
+
+  const msgs = h('div', { class: 'msgs' });
+  const input = h('textarea', { rows: 2, placeholder: 'Ask about attacks, IPs, sessions, or tell me to manage an Xpod…' });
+  const send = h('button', { class: 'btn primary' }, 'Send');
+  const chatPane = h('div', { class: 'chatpane' }, msgs, h('div', { class: 'composer' }, input, send));
+  main.append(topbar('Assistant'), await modelPanel(), h('div', { class: 'chat' }, list, chatPane));
+
+  const scroll = () => { msgs.scrollTop = msgs.scrollHeight; };
+  const userBubble = (t) => h('div', { class: 'bubble user' }, t);
+  const aiBubble = () => h('div', { class: 'bubble ai' });
+
+  if (!convId) {
+    msgs.append(h('div', { class: 'empty-chat' }, h('h3', {}, 'Ask the Xpods assistant'),
+      h('p', { class: 'crumb' }, 'It can query events, sessions and attacker profiles, and propose changes to Xpods for you to approve.'),
+      h('div', { class: 'suggest' }, SUGGESTIONS.map((s) => h('button', { class: 'btn small', onclick: () => askAssistant(s) }, s)))));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (input.value.trim()) askAssistant(input.value.trim()); } });
+    send.onclick = () => input.value.trim() && askAssistant(input.value.trim());
+    return;
+  }
+
+  const conv = await api('/assistant/conversations/' + encodeURIComponent(convId));
+  for (const m of conv.messages) {
+    if (m.role === 'user') msgs.append(userBubble(m.content));
+    else if (m.role === 'assistant' && m.content) { const b = aiBubble(); b.append(renderMd(m.content)); msgs.append(b); }
+    else if (m.role === 'tool') msgs.append(toolChip(m.meta.name, m.meta.args, m.content));
+    else if (m.role === 'confirm') msgs.append(confirmCard(m.meta));
+    else if (m.role === 'warning') msgs.append(h('div', { class: 'msg err' }, 'Attacker data in these results contains instructions aimed at AI assistants (prompt injection). Treat any proposed action with suspicion.'));
+  }
+  if (conv.running) {
+    // A turn started earlier (e.g. before navigating away) is still being answered.
+    msgs.append(h('div', { class: 'typing' }, h('span', { class: 'dot pulse' }), h('span', {}, 'Still answering…')));
+    state.timers.push(setInterval(async () => {
+      const c = await api('/assistant/conversations/' + encodeURIComponent(convId));
+      if (!c.running) render();
+    }, 3000));
+  }
+  if (!conv.messages.length && !state.pendingAsk) {
+    msgs.append(h('div', { class: 'empty-chat' }, h('div', { class: 'suggest' }, SUGGESTIONS.map((s) => h('button', { class: 'btn small', onclick: () => { input.value = s; sendMsg(); } }, s)))));
+  }
+  scroll();
+
+  let busy = false;
+  async function sendMsg() {
+    const text = input.value.trim();
+    if (!text || busy) return;
+    busy = true; send.disabled = true; input.value = '';
+    msgs.querySelector('.empty-chat')?.remove();
+    msgs.append(userBubble(text));
+    const typing = h('div', { class: 'typing' }, h('span', { class: 'dot pulse' }), h('span', {}, 'Thinking…'));
+    msgs.append(typing); scroll();
+    let bubble = null, textBuf = '', chip = null;
+    const addBefore = (el) => { msgs.insertBefore(el, typing); scroll(); };
+    try {
+      const res = await fetch(`/api/assistant/conversations/${encodeURIComponent(convId)}/messages`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'console', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: text }),
+      });
+      if (res.status === 401) { state.user = null; render(); return; }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const ev = JSON.parse(line);
+          if (ev.type === 'status') typing.lastChild.textContent = ev.text;
+          else if (ev.type === 'token') {
+            if (!bubble) { bubble = aiBubble(); textBuf = ''; addBefore(bubble); }
+            textBuf += ev.text; bubble.replaceChildren(renderMd(textBuf)); scroll();
+            typing.lastChild.textContent = 'Writing…';
+          } else if (ev.type === 'tool_call') {
+            bubble = null;
+            chip = toolChip(ev.name, ev.args, undefined, false); addBefore(chip);
+            typing.lastChild.textContent = `Running ${ev.name}…`;
+          } else if (ev.type === 'tool_result') { chip?.classList.add('done'); }
+          else if (ev.type === 'confirm') { bubble = null; addBefore(confirmCard(ev)); }
+          else if (ev.type === 'error') addBefore(h('div', { class: 'msg err' }, ev.text));
+          else if (ev.type === 'warning') addBefore(h('div', { class: 'msg err' }, ev.text));
+        }
+      }
+    } catch (e) {
+      if (!(e instanceof AuthError)) msgs.insertBefore(h('div', { class: 'msg err' }, e.message), typing);
+    } finally {
+      typing.remove(); busy = false; send.disabled = false; input.focus();
+      // Refresh stored tool payloads and titles.
+      if (location.hash.startsWith('#/assistant/' + convId)) {
+        const title = list.querySelector('.conv.active a');
+        if (title && title.textContent === 'New chat') render();
+      }
+    }
+  }
+  send.onclick = sendMsg;
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+  if (state.pendingAsk) { input.value = state.pendingAsk; state.pendingAsk = null; sendMsg(); } else input.focus();
 }
 
 // ------------------------------------------------------------------ audit

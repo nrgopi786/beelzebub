@@ -118,10 +118,34 @@ def read_env(client: str, mask: bool = True) -> dict[str, str]:
     return env
 
 
+def diff_env(client: str, changes: dict[str, str]) -> dict[str, tuple[str, str]]:
+    """Validate changes without writing. Returns {key: (old, new)} for real changes only."""
+    current = _parse_env(_env_path(client).read_text())
+    return {k: (current.get(k, ""), v) for k, v in _validated(current, changes).items()}
+
+
 def update_env(client: str, changes: dict[str, str]) -> list[str]:
     """Validate and apply changes in place, keeping comments/order. Returns changed keys."""
     path = _env_path(client)
-    current = _parse_env(path.read_text())
+    apply = _validated(_parse_env(path.read_text()), changes)
+    if not apply:
+        return []
+
+    lines, seen = path.read_text().splitlines(), set()
+    for i, line in enumerate(lines):
+        m = re.match(r"^([A-Z_][A-Z0-9_]*)=", line)
+        if m and m.group(1) in apply:
+            lines[i] = f'{m.group(1)}="{apply[m.group(1)]}"'
+            seen.add(m.group(1))
+    lines += [f'{k}="{v}"' for k, v in apply.items() if k not in seen]
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n")
+    tmp.chmod(0o600)
+    tmp.replace(path)
+    return sorted(apply)
+
+
+def _validated(current: dict[str, str], changes: dict[str, str]) -> dict[str, str]:
     apply = {}
     for key, value in changes.items():
         if key not in EDITABLE:
@@ -139,21 +163,7 @@ def update_env(client: str, changes: dict[str, str]) -> list[str]:
             raise ValidationError(f"{key}: {exc}") from None
         if current.get(key) != value:
             apply[key] = value
-    if not apply:
-        return []
-
-    lines, seen = path.read_text().splitlines(), set()
-    for i, line in enumerate(lines):
-        m = re.match(r"^([A-Z_][A-Z0-9_]*)=", line)
-        if m and m.group(1) in apply:
-            lines[i] = f'{m.group(1)}="{apply[m.group(1)]}"'
-            seen.add(m.group(1))
-    lines += [f'{k}="{v}"' for k, v in apply.items() if k not in seen]
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text("\n".join(lines) + "\n")
-    tmp.chmod(0o600)
-    tmp.replace(path)
-    return sorted(apply)
+    return apply
 
 
 # --------------------------------------------------------------------------- docker status

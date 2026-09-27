@@ -158,6 +158,54 @@ pre.raw { background: var(--term-bg); color: var(--term-text); padding: 12px; bo
 .msg.err { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
 .msg.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
 
+/* assistant */
+.modelbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+.dot.pulse { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.chat { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px; height: calc(100vh - 170px); min-height: 460px; }
+.convlist { display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+.convlist .btn { margin-bottom: 8px; }
+.conv { display: flex; align-items: center; border-radius: 7px; }
+.conv a { flex: 1; min-width: 0; padding: 7px 10px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.conv a:hover { text-decoration: none; }
+.conv:hover { background: var(--panel-2); }
+.conv.active { background: var(--accent-soft); }
+.conv.active a { color: var(--accent); font-weight: 600; }
+.conv .x { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 8px; visibility: hidden; font-size: 15px; }
+.conv:hover .x { visibility: visible; }
+.chatpane { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-width: 0; min-height: 0; }
+.msgs { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.bubble { max-width: 82%; padding: 10px 14px; border-radius: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.bubble.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.bubble.ai { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.md p { margin: 0 0 8px; } .md p:last-child { margin-bottom: 0; }
+.md ul, .md ol { margin: 4px 0 8px; padding-left: 20px; } .md li { margin: 2px 0; }
+.md h4 { margin: 10px 0 6px; font-size: 14px; }
+.md code { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.md pre.raw { margin: 6px 0; }
+.toolchip { align-self: flex-start; max-width: 82%; font-size: 12.5px; color: var(--muted); }
+.toolchip summary { cursor: pointer; font-family: var(--mono); display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px; border: 1px dashed var(--line); border-radius: 999px; list-style: none; overflow: hidden; text-overflow: ellipsis; max-width: 100%; white-space: nowrap; }
+.toolchip summary::-webkit-details-marker { display: none; }
+.toolchip .dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.toolchip.done .dot { background: var(--ok); animation: none; }
+.toolchip pre.raw { margin-top: 6px; max-height: 280px; }
+.confirm { align-self: flex-start; max-width: 82%; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.confirm-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.confirm-desc { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+.typing { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.composer { display: flex; gap: 10px; padding: 12px; border-top: 1px solid var(--line); align-items: flex-end; }
+.composer textarea { flex: 1; resize: none; font-family: var(--sans); font-size: 14px; }
+.empty-chat { margin: auto; text-align: center; max-width: 560px; }
+.suggest { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+@media (max-width: 760px) {
+  .chat { grid-template-columns: 1fr; height: auto; }
+  .convlist { max-height: 160px; }
+  .chatpane { height: 70vh; }
+  .bubble, .toolchip, .confirm { max-width: 100%; }
+}
+
 /* login */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login .panel { width: 100%; max-width: 360px; padding: 28px; }

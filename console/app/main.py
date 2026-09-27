@@ -11,7 +11,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Respo
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, auth, config, db, ingest, manager
+from . import analytics, assistant, auth, config, db, ingest, manager
 from .analytics import Filters
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -341,6 +341,73 @@ def get_job(job_id: str):
 def get_audit(limit: int = Query(200, ge=1, le=1000)):
     with db.session() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+# --------------------------------------------------------------------------- assistant
+
+@app.get("/api/assistant/status")
+def assistant_status():
+    return assistant.status()
+
+
+@app.post("/api/assistant/pull")
+def assistant_pull(user: str = Depends(current_user)):
+    with db.session() as conn:
+        db.audit(conn, user, "assistant.pull", config.LLM_MODEL)
+
+    def stream():
+        try:
+            yield from assistant.pull_model()
+        except OSError as exc:
+            yield json.dumps({"error": str(exc)}) + "\n"
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+
+@app.get("/api/assistant/conversations")
+def assistant_conversations(user: str = Depends(current_user)):
+    return assistant.list_conversations(user)
+
+
+@app.post("/api/assistant/conversations")
+def assistant_new_conversation(body: dict = Body(default={}), user: str = Depends(current_user)):
+    return {"id": assistant.create_conversation(user, str(body.get("title", "New chat")))}
+
+
+@app.get("/api/assistant/conversations/{cid}")
+def assistant_conversation(cid: str, user: str = Depends(current_user)):
+    conv = assistant.get_conversation(cid, user)
+    if not conv:
+        raise HTTPException(404, "conversation not found")
+    return conv
+
+
+@app.delete("/api/assistant/conversations/{cid}")
+def assistant_delete_conversation(cid: str, user: str = Depends(current_user)):
+    if not assistant.delete_conversation(cid, user):
+        raise HTTPException(404, "conversation not found")
+    return {"ok": True}
+
+
+@app.post("/api/assistant/conversations/{cid}/messages")
+def assistant_message(cid: str, body: dict = Body(...), user: str = Depends(current_user)):
+    text = str(body.get("content", "")).strip()[:4000]
+    if not text:
+        raise HTTPException(400, "empty message")
+    if not assistant.get_conversation(cid, user):
+        raise HTTPException(404, "conversation not found")
+    try:
+        events = assistant.chat_detached(cid, user, text)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from None
+    return StreamingResponse(events, media_type="application/x-ndjson", headers={"X-Accel-Buffering": "no"})
+
+
+@app.post("/api/assistant/actions/{pid}")
+def assistant_resolve(pid: str, body: dict = Body(...), user: str = Depends(current_user)):
+    try:
+        return assistant.resolve(pid, user, bool(body.get("approve")))
+    except KeyError:
+        raise HTTPException(404, "action not found, already handled or expired") from None
 
 
 # --------------------------------------------------------------------------- frontend

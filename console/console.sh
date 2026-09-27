@@ -6,6 +6,7 @@
 #   ./console.sh down      stop the console
 #   ./console.sh logs      follow console logs
 #   ./console.sh passwd    set a new admin password
+#   ./console.sh model     download the assistant's LLM (CONSOLE_LLM_MODEL)
 #   ./console.sh status    container status
 set -euo pipefail
 
@@ -61,6 +62,10 @@ CONSOLE_COOKIE_SECURE=false
 CONSOLE_SESSION_HOURS=12
 # Delete ingested events older than N days (0 = keep forever). Raw logs are unaffected.
 CONSOLE_RETENTION_DAYS=0
+# Local LLM (Ollama) for the assistant. qwen2.5:3b runs on CPU; use a larger model with a GPU.
+CONSOLE_LLM_PORT=11500
+CONSOLE_LLM_MODEL=qwen2.5:3b
+CONSOLE_LLM_MEM=5g
 EOF
     chmod 600 "$ENV_FILE"
   fi
@@ -93,10 +98,23 @@ cmd_passwd() {
   if [[ -n "$(compose ps -q console 2>/dev/null)" ]]; then compose up -d console; fi
 }
 
+llm_model() { sed -n 's/^CONSOLE_LLM_MODEL=//p' "$ENV_FILE"; }
+
+cmd_model() {
+  local model; model="$(llm_model)"
+  [[ -n "$model" ]] || die "CONSOLE_LLM_MODEL is not set in $ENV_FILE"
+  info "downloading $model into the ollama container"
+  compose exec -T ollama ollama pull "$model"
+}
+
 cmd_up() {
   cmd_init
   info "building and starting the console"
   compose up -d --build
+  local model; model="$(llm_model)"
+  if [[ -n "$model" ]] && ! compose exec -T ollama ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$model"; then
+    sleep 2; cmd_model || echo "warning: model download failed; retry with ./console.sh model" >&2
+  fi
   local host port
   host="$(sed -n 's/^CONSOLE_HOST=//p' "$ENV_FILE")"
   port="$(sed -n 's/^CONSOLE_PORT=//p' "$ENV_FILE")"
@@ -110,6 +128,7 @@ case "${1:-}" in
   down)   compose down ;;
   logs)   compose logs -f --tail 200 ;;
   passwd) cmd_passwd ;;
+  model)  cmd_model ;;
   status) compose ps ;;
-  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
