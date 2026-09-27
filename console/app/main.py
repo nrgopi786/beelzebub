@@ -32,7 +32,7 @@ async def lifespan(_app):
     stop.set()
 
 
-app = FastAPI(title="Honeypot Console", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Xpods Console", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -200,7 +200,7 @@ def export(f: Filters = Depends(filters), format: str = Query("csv", pattern="^(
             if format == "ioc":
                 cond = "src_ip != ''"
                 w = f"{where} AND {cond}" if where else f" WHERE {cond}"
-                yield "# honeypot source IPs\n"
+                yield "# Xpod source IPs\n"
                 for row in conn.execute(f"SELECT DISTINCT src_ip FROM events{w} ORDER BY src_ip", args):
                     yield row[0] + "\n"
                 return
@@ -225,7 +225,7 @@ def export(f: Filters = Depends(filters), format: str = Query("csv", pattern="^(
     media = {"csv": "text/csv", "json": "application/x-ndjson", "ioc": "text/plain"}[format]
     ext = {"csv": "csv", "json": "ndjson", "ioc": "txt"}[format]
     return StreamingResponse(stream(), media_type=media,
-                             headers={"Content-Disposition": f'attachment; filename="honeypot-events.{ext}"'})
+                             headers={"Content-Disposition": f'attachment; filename="xpod-events.{ext}"'})
 
 
 # --------------------------------------------------------------------------- management

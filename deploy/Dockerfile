@@ -1,4 +1,4 @@
-# Hardened runtime image for per-client honeypot deployments.
+# Hardened runtime image for per-client Xpod deployments.
 # Build context is the repository root: docker build -f deploy/Dockerfile .
 FROM golang:1.26-alpine AS builder
 

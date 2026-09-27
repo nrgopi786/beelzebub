@@ -1,4 +1,4 @@
-# Shared compose definition for one client honeypot instance.
+# Shared compose definition for one client Xpod instance.
 # Driven by deploy.sh, which supplies:
 #   --env-file clients/<name>/.env           client settings
 #   -f clients/<name>/compose.ports.yml      published ports derived from enabled services
@@ -19,7 +19,7 @@ x-hardening: &hardening
 services:
   beelzebub:
     <<: *hardening
-    image: beelzebub-honeypot:${HP_IMAGE_TAG:-local}
+    image: xpod:${HP_IMAGE_TAG:-local}
     build:
       context: ..
       dockerfile: deploy/Dockerfile

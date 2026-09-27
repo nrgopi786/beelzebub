@@ -1,10 +1,10 @@
-# Honeypot management console. Start with ./console.sh up (it writes .env first).
-name: honeypot-console
+# Xpods management console. Start with ./console.sh up (it writes .env first).
+name: xpods-console
 
 services:
   console:
     build: .
-    image: honeypot-console:local
+    image: xpods-console:local
     restart: unless-stopped
     # Host netns: deploy.sh port checks see real host sockets, and the UI binds to
     # CONSOLE_HOST (127.0.0.1 by default) on the host directly.

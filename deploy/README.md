@@ -1,8 +1,8 @@
-# Per-client honeypot deployment
+# Per-client Xpod deployment
 
-Standalone, containerised honeypot instances built on beelzebub. Each client gets
+Standalone, containerised Xpod instances built on beelzebub. Each client gets
 its own isolated compose project (`hp-<client>`), config, TLS certificate, SSH host
-key, and event log. The client's DNS A record points at the honeypot host, so
+key, and event log. The client's DNS A record points at the Xpod host, so
 scanners and attackers targeting that name hit the decoy services.
 
 Nothing runs on the host except Docker: the build, TLS issuance, log rotation, and
@@ -23,7 +23,7 @@ $EDITOR clients/acme/.env                            # services, bind IP, hostna
 ```
 
 Then create or change the client's DNS record:
-`acme-portal.example.com. A <honeypot public IP>`.
+`acme-portal.example.com. A <Xpod public IP>`.
 
 ## Commands
 
@@ -37,7 +37,7 @@ Then create or change the client's DNS record:
 | `events <client> [n]` | Last *n* lines of the JSON event log |
 | `validate <client>` | Render the config and run `beelzebub validate` on it |
 | `cert <client>` | Issue or renew a Let's Encrypt certificate (certbot, HTTP-01) |
-| `firewall <client>` | Print `DOCKER-USER` iptables rules that block honeypot egress |
+| `firewall <client>` | Print `DOCKER-USER` iptables rules that block Xpod egress |
 | `list` | List configured clients |
 
 ## Layout
@@ -69,7 +69,7 @@ On every `up`/`validate`, `config/` is rebuilt from:
    so upstream lure improvements are picked up when you merge upstream.
 2. Per-client tweaks: SSH/Telnet `serverName` is set to `HP_HOSTNAME`. Each SSH service
    gets `hostKeyPath` so its fingerprint survives restarts and rebuilds. A fingerprint
-   that changes on every restart is an easy honeypot tell.
+   that changes on every restart is an easy tell that the service is a decoy.
 3. `https-443`: synthesised from `http-80` with the client certificate.
 4. `custom/*.yaml`: copied last, replacing any generated file with the same name.
 
@@ -87,12 +87,12 @@ edit to `HP_SERVICES` or a drop-in under `custom/`.
 - Config is mounted read-only; only `data/logs` and `data/keys` are writable.
 - Metrics are published on `127.0.0.1:<HP_METRICS_PORT>` only.
 - Egress: apply the rules from `./deploy.sh firewall <client>` on the host. They stop a
-  compromised or abused honeypot from initiating outbound connections. Skip or adjust
+  compromised or abused Xpod from initiating outbound connections. Skip or adjust
   them if you use the LLM or RabbitMQ integrations.
 
-## Host preparation (once per honeypot host)
+## Host preparation (once per Xpod host)
 
-1. **Free the ports.** The honeypot needs 22, 80, 443, and the others. Move the real
+1. **Free the ports.** The Xpod needs 22, 80, 443, and the others. Move the real
    sshd to another port (for example `Port 2222` in `/etc/ssh/sshd_config`) and restrict
    it to your admin IPs. `deploy.sh up` refuses to start while a published port is
    in use.
@@ -110,7 +110,7 @@ edit to `HP_SERVICES` or a drop-in under `custom/`.
 - `HP_TLS=letsencrypt`: set `HP_LETSENCRYPT_EMAIL`, point DNS at the host, then run
   `./deploy.sh cert <client>`. Port 80 is freed for a few seconds during issuance. Re-run
   the command from cron roughly monthly to renew. Issuance publishes the name in
-  Certificate Transparency logs, which draws more scanner traffic. For a honeypot that
+  Certificate Transparency logs, which draws more scanner traffic. For an Xpod that
   is usually what you want.
 
 ## Events and log shipping
@@ -122,7 +122,7 @@ edit to `HP_SERVICES` or a drop-in under `custom/`.
 
 To centralise events, set `HP_SHIP_URL` (and optionally `HP_SHIP_AUTH_HEADER`) and run
 `up` again. A Vector sidecar then posts newline-delimited JSON, tagged with
-`honeypot_client` and `honeypot_domain`, with a disk buffer for collector outages.
+`xpod_client` and `xpod_domain`, with a disk buffer for collector outages.
 Change the sink in `vector/vector.yaml` for Elasticsearch, Splunk HEC, Loki, S3, and
 other targets.
 

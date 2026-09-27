@@ -1,4 +1,4 @@
-"""Honeypot instance management. All lifecycle work is delegated to deploy/deploy.sh."""
+"""Xpod instance management. All lifecycle work is delegated to deploy/deploy.sh."""
 import ipaddress
 import os
 import re

@@ -140,7 +140,7 @@ pre.raw { background: var(--term-bg); color: var(--term-text); padding: 12px; bo
 .term .out { color: #a9b4c4; }
 .term .sys { color: #e5a33b; }
 
-/* honeypot cards */
+/* Xpod cards */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
 .card h3 { font-size: 16px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .card .meta { color: var(--muted); font-size: 13px; margin: 2px 0 10px; }

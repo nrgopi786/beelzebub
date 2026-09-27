@@ -122,7 +122,7 @@ function render() {
   const { parts, params } = route();
   const views = {
     overview: viewOverview, events: viewEvents, sessions: viewSessions, session: viewSession,
-    attackers: viewAttackers, ip: viewIp, xpods: viewHoneypots, xpod: viewHoneypot, audit: viewAudit,
+    attackers: viewAttackers, ip: viewIp, xpods: viewXpods, xpod: viewXpod, audit: viewAudit,
   };
   const view = views[parts[0]] || viewOverview;
   const main = h('main', { class: 'main' });
@@ -461,7 +461,7 @@ async function viewIp(main, parts) {
         : h('div', { class: 'empty' }, 'No interactive sessions.'))));
 }
 
-// ------------------------------------------------------------------ honeypots
+// ------------------------------------------------------------------ Xpods
 
 function confirmButton(label, onConfirm, cls = 'btn small danger') {
   const b = h('button', { class: cls }, label);
@@ -500,7 +500,7 @@ function followJob(jobId, consoleBox, onDone) {
   state.timers.push(timer);
 }
 
-async function viewHoneypots(main) {
+async function viewXpods(main) {
   state.clients = [];
   const clients = await loadClients();
   const msg = h('div');
@@ -556,7 +556,7 @@ async function viewHoneypots(main) {
   }, 30000));
 }
 
-async function viewHoneypot(main, parts) {
+async function viewXpod(main, parts) {
   const name = parts[0];
   const c = await api('/clients/' + encodeURIComponent(name));
   const env = c.env;

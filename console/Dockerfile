@@ -1,4 +1,4 @@
-# Honeypot management console. Build context: console/
+# Xpods management console. Build context: console/
 FROM docker:29-cli AS dockercli
 
 FROM python:3.13-slim

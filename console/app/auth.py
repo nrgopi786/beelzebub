@@ -9,7 +9,7 @@ import time
 
 from . import config
 
-COOKIE = "hp_console"
+COOKIE = "xpods_console"
 _N, _R, _P = 2**14, 8, 1
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-client honeypot lifecycle on top of beelzebub, fully containerised.
+# Per-client Xpod lifecycle on top of beelzebub, fully containerised.
 #
 #   ./deploy.sh new <client> <domain> [fake-hostname]   scaffold clients/<client>/
 #   ./deploy.sh up <client>                              render config, build, start
@@ -18,7 +18,7 @@ DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$DEPLOY_DIR")"
 CLIENTS_DIR="$DEPLOY_DIR/clients"
 SERVICES_SRC="$REPO_DIR/configurations/services"
-IMAGE="beelzebub-honeypot:local"
+IMAGE="xpod:local"
 
 die()  { echo "error: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
@@ -218,7 +218,7 @@ cmd_up() {
   compose "$client" up -d --build --remove-orphans
   compose "$client" ps
   echo
-  info "honeypot for $HP_DOMAIN is up. Ports:"
+  info "Xpod for $HP_DOMAIN is up. Ports:"
   grep -oE '"[^"]+/tcp"' "$(client_dir "$client")/compose.ports.yml" | tr -d '"' | sed 's/^/    /'
   echo "    events: $0 events $client"
 }
@@ -251,7 +251,7 @@ cmd_cert() {
   local le="$dir/data/letsencrypt"
   mkdir -p "$le"
   local running; running="$(docker ps -q --filter "label=com.docker.compose.project=hp-$client" --filter "label=com.docker.compose.service=beelzebub")"
-  [[ -n "$running" ]] && { info "stopping honeypot briefly to free port 80"; compose "$client" stop beelzebub; }
+  [[ -n "$running" ]] && { info "stopping Xpod briefly to free port 80"; compose "$client" stop beelzebub; }
   info "requesting certificate for $HP_DOMAIN (HTTP-01, standalone)"
   local rc=0
   docker run --rm -p "${HP_BIND_IP}:80:80" -v "$le:/etc/letsencrypt" certbot/certbot:v5.1.0 \
@@ -274,7 +274,7 @@ cmd_firewall() {
   local subnet; subnet="$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "$net" 2>/dev/null)" \
     || die "network $net not found; start the client first"
   cat <<EOF
-# Block honeypot-initiated outbound traffic (replies to attackers are still allowed).
+# Block Xpod-initiated outbound traffic (replies to attackers are still allowed).
 # Review, then run as root. Persist with iptables-persistent or your firewall manager.
 iptables -I DOCKER-USER -s $subnet -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 iptables -I DOCKER-USER 2 -s $subnet -j DROP

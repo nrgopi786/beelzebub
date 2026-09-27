@@ -1,6 +1,6 @@
-# Honeypot Console
+# Xpods Console
 
-A web console, running in its own container, for managing the per-client honeypots
+A web console, running in its own container, for managing the per-client Xpods
 in [`deploy/`](../deploy/README.md) and investigating what attackers do on them.
 
 ```bash
@@ -16,11 +16,11 @@ cd console
   protocol; top source IPs, credentials, usernames, passwords, shell commands, HTTP
   requests, user agents and TCP payloads. Every list is clickable and drills down.
 - **Events**: full-text search across commands, URIs, credentials, bodies, payloads and
-  user agents, with filters for honeypot, protocol, status, source IP and time range.
+  user agents, with filters for Xpod, protocol, status, source IP and time range.
   An inspector panel shows the parsed fields and the raw JSON.
 - **Sessions**: SSH, Telnet and TCP sessions, replayed as a terminal transcript
-  (commands and the honeypot's responses, in order).
-- **Attackers and IP profile**: per-IP first/last seen, protocols, targeted honeypots,
+  (commands and the Xpod's responses, in order).
+- **Attackers and IP profile**: per-IP first/last seen, protocols, targeted Xpods,
   client software, credentials, commands, HTTP requests, sessions and daily activity.
   Also tags and investigation notes, plus links to AbuseIPDB, GreyNoise, Shodan and
   VirusTotal.
@@ -28,7 +28,7 @@ cd console
   IOC feeds.
 
 **Management** (every action runs `deploy/deploy.sh`, so the CLI and the UI never drift)
-- Create honeypots; edit domain, fake hostname, bind IP, services, TLS, resources,
+- Create Xpods; edit domain, fake hostname, bind IP, services, TLS, resources,
   log rotation and shipping.
 - Deploy, redeploy, restart, stop, validate and issue certificates. `deploy.sh` output
   streams live in the browser.
@@ -74,7 +74,7 @@ displays attacker-controlled strings. It is built accordingly:
 
 **Remote access:** use an SSH tunnel or VPN, or put it behind a TLS reverse proxy with
 extra authentication (set `CONSOLE_HOST`, and `CONSOLE_COOKIE_SECURE=true` behind
-HTTPS). Never expose it directly on a honeypot host's public IP.
+HTTPS). Never expose it directly on an Xpod host's public IP.
 
 ## Operations
 
@@ -87,4 +87,4 @@ Settings live in `console/.env`: `CONSOLE_PORT`, `CONSOLE_SESSION_HOURS`, and
 `CONSOLE_RETENTION_DAYS` (prunes the index only; raw logs follow the per-client rotation
 settings).
 
-Tests: `docker run --rm --user 0 -v $PWD/tests:/app/tests:ro --entrypoint sh honeypot-console:local -c "pip install -q pytest && python -m pytest -q tests"`
+Tests: `docker run --rm --user 0 -v $PWD/tests:/app/tests:ro --entrypoint sh xpods-console:local -c "pip install -q pytest && python -m pytest -q tests"`

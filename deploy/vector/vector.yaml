@@ -1,7 +1,7 @@
 # Ships beelzebub JSON events to a central HTTP collector (Vector, Logstash http input,
 # Elastic/OpenSearch _bulk proxies, Splunk HEC raw, Loki push gateways, ...).
 sources:
-  honeypot_log:
+  xpod_log:
     type: file
     include: ["/logs/beelzebub.log"]
     read_from: beginning
@@ -12,15 +12,15 @@ sources:
 transforms:
   enrich:
     type: remap
-    inputs: [honeypot_log]
+    inputs: [xpod_log]
     source: |
       parsed, err = parse_json(.message)
       if err == null && is_object(parsed) {
         . = merge!(., parsed)
         del(.message)
       }
-      .honeypot_client = get_env_var!("HP_CLIENT")
-      .honeypot_domain = get_env_var("HP_DOMAIN") ?? ""
+      .xpod_client = get_env_var!("HP_CLIENT")
+      .xpod_domain = get_env_var("HP_DOMAIN") ?? ""
       del(.file)
       del(.source_type)
 
