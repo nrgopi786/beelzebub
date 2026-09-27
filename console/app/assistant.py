@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from . import analytics, config, db, manager
+from . import analytics, config, db, manager, providers
 from .analytics import Filters
 
 log = logging.getLogger("console.assistant")
@@ -409,21 +409,80 @@ def _history(cid: str) -> list[dict]:
             "SELECT role, content, meta FROM assistant_messages WHERE conv_id = ? ORDER BY id DESC LIMIT ?",
             (cid, HISTORY_MESSAGES))][::-1]
     out = []
-    for r in rows:
+    for i, r in enumerate(rows):
         meta = json.loads(r["meta"] or "{}")
         if r["role"] in ("user", "assistant") and r["content"]:
             out.append({"role": r["role"], "content": r["content"]})
         elif r["role"] == "tool":
+            tid = f"h{i}"  # synthetic id pairs this call with its result for OpenAI/Anthropic
             out.append({"role": "assistant", "content": "",
-                        "tool_calls": [{"function": {"name": meta.get("name"), "arguments": meta.get("args", {})}}]})
-            out.append({"role": "tool", "tool_name": meta.get("name"), "content": r["content"][:1500]})
+                        "tool_calls": [{"id": tid, "name": meta.get("name", ""), "args": meta.get("args", {})}]})
+            out.append({"role": "tool", "tool_call_id": tid, "name": meta.get("name", ""),
+                        "content": r["content"][:1500]})
         elif r["role"] == "confirm":
             out.append({"role": "assistant", "content": f"[Proposed action: {meta.get('description')} "
                                                         f"— status: {meta.get('status')}]"})
     return out
 
 
-# ------------------------------------------------------------------ ollama
+# ------------------------------------------------------------------ provider settings
+
+PROVIDERS = ("local", "openai", "anthropic")
+SECRET_SET = {"key_openai", "key_anthropic"}
+_DEFAULTS = {"provider": "local", "model_local": config.LLM_MODEL,
+             "model_openai": "gpt-4o-mini", "model_anthropic": "claude-opus-5",
+             "key_openai": "", "key_anthropic": ""}
+
+
+def _cfg() -> dict:
+    with db.session() as conn:
+        rows = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM app_config")}
+    return {**_DEFAULTS, **{k: v for k, v in rows.items() if k in _DEFAULTS}}
+
+
+def active_config() -> dict:
+    c = _cfg()
+    provider = c["provider"] if c["provider"] in PROVIDERS else "local"
+    model = {"local": c["model_local"], "openai": c["model_openai"], "anthropic": c["model_anthropic"]}[provider]
+    key = {"local": "", "openai": c["key_openai"], "anthropic": c["key_anthropic"]}[provider]
+    return {"provider": provider, "model": model, "api_key": key}
+
+
+def get_settings() -> dict:
+    c = _cfg()
+    return {"provider": c["provider"],
+            "models": {"local": c["model_local"], "openai": c["model_openai"], "anthropic": c["model_anthropic"]},
+            "keys_set": {"openai": bool(c["key_openai"]), "anthropic": bool(c["key_anthropic"])},
+            "status": status()}
+
+
+def set_settings(patch: dict, user: str) -> dict:
+    updates = {}
+    if "provider" in patch:
+        if patch["provider"] not in PROVIDERS:
+            raise ValueError("provider must be local, openai or anthropic")
+        updates["provider"] = patch["provider"]
+    for pkey, ckey in (("model_local", "model_local"), ("model_openai", "model_openai"),
+                       ("model_anthropic", "model_anthropic")):
+        if patch.get(pkey):
+            updates[ckey] = str(patch[pkey]).strip()[:100]
+    for pkey in ("key_openai", "key_anthropic"):
+        if pkey in patch:  # only touch a key when explicitly supplied
+            val = str(patch[pkey])
+            if val == "":       # explicit empty clears the stored key
+                updates[pkey] = ""
+            elif val != manager.MASK:  # MASK means "leave unchanged"
+                updates[pkey] = val.strip()
+    with db.session() as conn:
+        for k, v in updates.items():
+            conn.execute("INSERT INTO app_config(key, value) VALUES (?, ?) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, v))
+        audited = [k for k in updates if k not in SECRET_SET] + [k for k in updates if k in SECRET_SET]
+        db.audit(conn, user, "assistant.settings", ", ".join(audited))
+    return get_settings()
+
+
+# ------------------------------------------------------------------ status / model pull
 
 def _ollama(path: str, body: dict | None = None, timeout: int = 600):
     req = urllib.request.Request(config.LLM_URL + path, data=json.dumps(body).encode() if body else None,
@@ -432,17 +491,25 @@ def _ollama(path: str, body: dict | None = None, timeout: int = 600):
 
 
 def status() -> dict:
-    try:
-        with _ollama("/api/tags", timeout=5) as r:
-            models = [m["name"] for m in json.load(r).get("models", [])]
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        return {"reachable": False, "model": config.LLM_MODEL, "installed": False, "error": str(exc)}
-    installed = any(m == config.LLM_MODEL or m == config.LLM_MODEL + ":latest" for m in models)
-    return {"reachable": True, "model": config.LLM_MODEL, "installed": installed, "models": models}
+    ac = active_config()
+    provider, model = ac["provider"], ac["model"]
+    if provider == "local":
+        try:
+            with _ollama("/api/tags", timeout=5) as r:
+                models = [m["name"] for m in json.load(r).get("models", [])]
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            return {"provider": "local", "model": model, "ready": False, "reachable": False,
+                    "installed": False, "error": str(exc)}
+        installed = any(m == model or m == model + ":latest" for m in models)
+        return {"provider": "local", "model": model, "reachable": True, "installed": installed,
+                "ready": installed, "models": models}
+    key_present = bool(ac["api_key"])
+    return {"provider": provider, "model": model, "ready": key_present, "key_present": key_present,
+            "cloud": True, "error": None if key_present else f"no API key set for {provider}"}
 
 
 def pull_model():
-    with _ollama("/api/pull", {"model": config.LLM_MODEL, "stream": True}, timeout=3600) as r:
+    with _ollama("/api/pull", {"model": active_config()["model"], "stream": True}, timeout=3600) as r:
         for line in r:
             yield line.decode(errors="replace").strip() + "\n"
 
@@ -462,27 +529,24 @@ def chat(cid: str, user: str, text: str):
     tools = READ_TOOLS + WRITE_TOOLS
     # Once attacker data aimed at the assistant has been read, every proposal is suspect.
     tainted = any(m["role"] == "tool" and INJECTION_RE.search(m["content"]) for m in history)
-    yield ev(type="status", text="Thinking…")
+    cfg = active_config()
+    yield ev(type="status", text=f"Thinking… ({cfg['provider']}: {cfg['model']})")
 
     for _round in range(MAX_ROUNDS):
         content, calls = "", []
+        gen = providers.stream(cfg, messages, tools)
         try:
-            with _ollama("/api/chat", {"model": config.LLM_MODEL, "messages": messages, "tools": tools,
-                                       "stream": True, "options": {"temperature": 0.1}}) as r:
-                for line in r:
-                    if not line.strip():
-                        continue
-                    chunk = json.loads(line)
-                    if chunk.get("error"):
-                        raise RuntimeError(chunk["error"])
-                    msg = chunk.get("message") or {}
-                    if msg.get("content"):
-                        content += msg["content"]
-                        yield ev(type="token", text=msg["content"])
-                    calls.extend(msg.get("tool_calls") or [])
-        except (urllib.error.URLError, OSError, RuntimeError, ValueError) as exc:
-            log.warning("LLM request failed: %s", exc)
-            yield ev(type="error", text=f"The local model is unavailable ({exc}). Check the Assistant status panel.")
+            while True:
+                kind, data = next(gen)
+                if kind == "token":
+                    content += data
+                    yield ev(type="token", text=data)
+        except StopIteration as stop:
+            content, calls = stop.value
+        except providers.ProviderError as exc:
+            log.warning("LLM request failed (%s): %s", cfg["provider"], exc)
+            hint = "Check the model settings on the Assistant page."
+            yield ev(type="error", text=f"The {cfg['provider']} model is unavailable: {exc}. {hint}")
             return
 
         if not calls:
@@ -493,8 +557,9 @@ def chat(cid: str, user: str, text: str):
 
         messages.append({"role": "assistant", "content": content, "tool_calls": calls})
         for call in calls:
-            fn = call.get("function") or {}
-            name, args = fn.get("name", ""), fn.get("arguments") or {}
+            name = call.get("name", "")
+            args = call.get("args") or {}
+            call_id = call.get("id") or f"call_{name}"
             if isinstance(args, str):
                 try:
                     args = json.loads(args)
@@ -511,7 +576,7 @@ def chat(cid: str, user: str, text: str):
                     with db.session() as conn:
                         _save(conn, cid, "tool", payload, {"name": name, "args": args})
                     yield ev(type="tool_result", name=name, size=len(payload))
-                    messages.append({"role": "tool", "tool_name": name, "content": payload})
+                    messages.append({"role": "tool", "tool_call_id": call_id, "name": name, "content": payload})
                     continue
                 item = propose(name, args, user, cid)
                 item["suspicious"] = tainted
@@ -543,7 +608,7 @@ def chat(cid: str, user: str, text: str):
                 for role, content, meta in after_tool:
                     _save(conn, cid, role, content, meta)
             yield ev(type="tool_result", name=name, size=len(payload))
-            messages.append({"role": "tool", "tool_name": name, "content": payload})
+            messages.append({"role": "tool", "tool_call_id": call_id, "name": name, "content": payload})
         yield ev(type="status", text="Analysing results…")
 
     with db.session() as conn:

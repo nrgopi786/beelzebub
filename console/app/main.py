@@ -364,6 +364,19 @@ def assistant_status():
     return assistant.status()
 
 
+@app.get("/api/assistant/settings")
+def assistant_get_settings(user: str = Depends(current_user)):
+    return assistant.get_settings()
+
+
+@app.put("/api/assistant/settings")
+def assistant_set_settings(body: dict = Body(...), user: str = Depends(current_user)):
+    try:
+        return assistant.set_settings(body, user)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
 @app.post("/api/assistant/pull")
 def assistant_pull(user: str = Depends(current_user)):
     with db.session() as conn:

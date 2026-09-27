@@ -779,37 +779,81 @@ function confirmCard(meta) {
     buttons, body, out);
 }
 
+const PROVIDER_LABELS = { local: 'Local (Ollama)', openai: 'OpenAI', anthropic: 'Claude (Anthropic)' };
+
 async function modelPanel() {
-  const box = h('div', { class: 'modelbar' });
-  let st;
-  try { st = await api('/assistant/status'); } catch (e) { if (e instanceof AuthError) throw e; st = { reachable: false }; }
+  const wrap = h('div');
+  const bar = h('div', { class: 'modelbar' });
+  const panelBox = h('div', { hidden: true, style: 'margin-bottom:14px' });
+  let s;
+  try { s = await api('/assistant/settings'); } catch (e) { if (e instanceof AuthError) throw e; s = null; }
+  if (!s) { bar.append(h('span', { class: 'dot bad' }), h('span', {}, 'Assistant settings unavailable.')); wrap.append(bar); return wrap; }
+  const st = s.status || {};
   const dot = (ok) => h('span', { class: 'dot ' + (ok ? 'ok' : 'bad') });
-  if (!st.reachable) {
-    box.append(dot(false), h('span', {}, 'Local LLM unreachable. Start it with ', h('code', {}, 'cd console && ./console.sh up'), '.'));
-  } else if (!st.installed) {
-    const prog = h('span', { class: 'crumb' });
-    const btn = h('button', { class: 'btn small primary', onclick: async () => {
-      btn.disabled = true;
-      const res = await fetch('/api/assistant/pull', { method: 'POST', credentials: 'same-origin', headers: { 'X-Requested-With': 'console' } });
-      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
-      for (;;) {
-        const { value, done } = await reader.read(); if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n'); buf = lines.pop();
-        for (const l of lines) {
-          try {
-            const j = JSON.parse(l);
-            prog.textContent = j.error ? 'error: ' + j.error : j.total ? `${j.status} ${Math.round(100 * (j.completed || 0) / j.total)}%` : j.status;
-          } catch { /* partial */ }
-        }
-      }
-      render();
-    } }, `Download ${st.model}`);
-    box.append(dot(false), h('span', {}, `Model ${st.model} is not installed.`), btn, prog);
+
+  // status line
+  const provLabel = PROVIDER_LABELS[st.provider] || st.provider;
+  const line = h('span', {});
+  if (st.provider === 'local') {
+    if (!st.reachable) line.append('Local model server unreachable — start it with ', h('code', {}, 'cd console && ./console.sh up'), '.');
+    else if (!st.installed) line.append(`Local model ${st.model} is not installed.`);
+    else line.append('Using local model ', h('code', {}, st.model), ' — runs on this host, no data leaves it.');
   } else {
-    box.append(dot(true), h('span', {}, 'Local model ', h('code', {}, st.model), ' ready — runs on this host, no data leaves it.'));
+    line.append(`Using ${provLabel} model `, h('code', {}, st.model), st.ready ? ' — API key set.' : ' — no API key set.');
   }
-  return box;
+  bar.append(dot(!!st.ready), line, h('div', { style: 'flex:1' }),
+    st.provider === 'local' && st.reachable && !st.installed
+      ? h('button', { class: 'btn small primary', onclick: () => pullLocalModel(st.model) }, `Download ${st.model}`) : '',
+    h('button', { class: 'btn small', onclick: () => { panelBox.hidden = !panelBox.hidden; } }, 'Model settings'));
+
+  // settings form
+  const provSel = h('select', {}, Object.entries(PROVIDER_LABELS).map(([v, l]) =>
+    h('option', { value: v, selected: v === s.provider }, l)));
+  const mLocal = h('input', { type: 'text', value: s.models.local, size: 24 });
+  const mOpenai = h('input', { type: 'text', value: s.models.openai, size: 24 });
+  const mAnthropic = h('input', { type: 'text', value: s.models.anthropic, size: 24 });
+  const kOpenai = h('input', { type: 'password', placeholder: s.keys_set.openai ? '•••••• (set)' : 'sk-…', autocomplete: 'off', size: 30 });
+  const kAnthropic = h('input', { type: 'password', placeholder: s.keys_set.anthropic ? '•••••• (set)' : 'sk-ant-…', autocomplete: 'off', size: 30 });
+  const msg = h('div');
+  const warn = h('div', { class: 'msg err', hidden: true },
+    'A cloud provider sends event data — including attacker-controlled text and browser telemetry (visited URLs) — to that third party for processing. Only enable it if that is acceptable for this data.');
+  const syncWarn = () => { warn.hidden = provSel.value === 'local'; };
+  provSel.addEventListener('change', syncWarn); syncWarn();
+
+  const save = async () => {
+    msg.replaceChildren();
+    const body = { provider: provSel.value, model_local: mLocal.value.trim(),
+                   model_openai: mOpenai.value.trim(), model_anthropic: mAnthropic.value.trim() };
+    if (kOpenai.value) body.key_openai = kOpenai.value;
+    if (kAnthropic.value) body.key_anthropic = kAnthropic.value;
+    try { await api('/assistant/settings', { method: 'PUT', body }); render(); }
+    catch (e) { msg.replaceChildren(h('div', { class: 'msg err' }, e.message)); }
+  };
+  const row = (label, ...ctl) => [h('label', {}, label), h('div', {}, ...ctl)];
+  panelBox.append(h('div', { class: 'panel' },
+    h('h3', {}, 'Model provider'), msg, warn,
+    h('div', { class: 'form' },
+      row('Provider', provSel),
+      row('Local model', mLocal, h('span', { class: 'hint' }, ' Ollama model on this host')),
+      row('OpenAI model', mOpenai, h('span', { class: 'hint' }, ' e.g. gpt-4o, gpt-4o-mini')),
+      row('OpenAI API key', kOpenai),
+      row('Claude model', mAnthropic, h('span', { class: 'hint' }, ' e.g. claude-opus-5, claude-sonnet-5')),
+      row('Claude API key', kAnthropic)),
+    h('div', { class: 'actions', style: 'margin-top:12px' }, h('button', { class: 'btn primary', onclick: save }, 'Save settings'),
+      h('span', { class: 'crumb' }, ' Keys are stored on the host and never shown again.'))));
+  wrap.append(bar, panelBox);
+  return wrap;
+}
+
+async function pullLocalModel(model) {
+  const res = await fetch('/api/assistant/pull', { method: 'POST', credentials: 'same-origin', headers: { 'X-Requested-With': 'console' } });
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n'); buf = lines.pop();
+  }
+  render();
 }
 
 const SUGGESTIONS = [

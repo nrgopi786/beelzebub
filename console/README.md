@@ -36,6 +36,11 @@ cd console
 - It can **propose** changes (deploy, restart, stop, settings, new Xpod, IP notes). Nothing runs
   until you click Approve on the proposal card. Settings proposals show an `old → new` diff.
 - "Ask assistant" buttons on the overview, IP and session pages start a pre-filled investigation.
+- **Model provider is selectable** on the Assistant page (Model settings): the local model
+  (Ollama, default, no data leaves the host), OpenAI, or Claude (Anthropic) via an API key.
+  Keys are stored on the host (SQLite `app_config`) and never returned to the browser.
+  **Choosing a cloud provider sends event data — attacker-controlled text and browser
+  telemetry (visited URLs) — to that third party**; the UI warns before you switch.
 
 **Management** (every action runs `deploy/deploy.sh`, so the CLI and the UI never drift)
 - Create Xpods; edit domain, fake hostname, bind IP, services, TLS, resources,
