@@ -72,6 +72,24 @@ console container (host netns, 127.0.0.1:8088)
 - The raw log files remain the source of truth. Deleting `console/data/console.db`
   rebuilds the index from them on the next start.
 
+## MITRE ATT&CK classification
+
+Every Xpod event is tagged at ingest with MITRE ATT&CK techniques and tactics by a rule engine
+(`app/mitre.py`) over the protocol, shell command, HTTP request, credentials and user-agent —
+e.g. an SSH `wget …` becomes `T1059.004 Unix Shell` + `T1105 Ingress Tool Transfer`, a
+`/wp-login.php` probe `T1110 Brute Force`. Tags are stored as `techniques`/`tactics` keyword
+arrays, so you can:
+
+- browse the **ATT&CK** page: a tactic-by-tactic matrix with per-technique counts, each click-through
+  to the matching events;
+- filter Events by `technique=` / `tactic=`, see badges on the event detail, and get tactic/technique
+  panels on the Overview and each IP profile;
+- ask the assistant for the ATT&CK breakdown or to pivot on a technique;
+- export the `techniques`/`tactics` columns in CSV/JSON.
+
+Existing events are classified once on startup (idempotent backfill). The rules are triage
+heuristics, not definitive attribution; tune them in `app/mitre.py`.
+
 ## Event store (OpenSearch)
 
 All events — Xpod attacker activity **and** browser telemetry — live in one OpenSearch

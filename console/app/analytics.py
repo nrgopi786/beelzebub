@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from . import store
+from . import mitre, store
 
 PRESETS = {"1h": timedelta(hours=1), "24h": timedelta(days=1), "7d": timedelta(days=7),
            "30d": timedelta(days=30), "90d": timedelta(days=90)}
@@ -45,6 +45,8 @@ class Filters:
     since: str | None = "24h"
     until: str | None = None
     source: str | None = None
+    technique: str | None = None
+    tactic: str | None = None
 
     def query(self) -> dict:
         return store.build_query(self)
@@ -92,6 +94,17 @@ def _fmt(rows, n=8):
     return rows[:n]
 
 
+def _techniques(agg) -> list[dict]:
+    rows = _buckets(agg)
+    for r in rows:
+        info = mitre.TECHNIQUES.get(r["key"])
+        r["name"] = info[0] if info else r["key"]
+        r["tactic"] = info[1] if info else ""
+        r["id"] = r["key"]
+        r["key"] = f"{r['id']} {r['name']}"
+    return rows
+
+
 # --------------------------------------------------------------------------- stats
 
 def stats(conn, f: Filters) -> dict:
@@ -118,6 +131,8 @@ def stats(conn, f: Filters) -> dict:
         "urls": _filter_agg({"term": {"source": "browser"}}, _terms("url", 15)),
         "tcp_payloads": _filter_agg({"bool": {"filter": [{"term": {"protocol": "TCP"}}, _exists("command")]}},
                                     _multi(["description", "command"])),
+        "tactics": _terms("tactics", 15),
+        "techniques": _terms("techniques", 20),
         "uniq_ip": {"cardinality": {"field": "src_ip"}},
         "sessions": _filter_agg({"bool": {"must_not": [{"term": {"status": "Stateless"}}]}},
                                 {"cardinality": {"field": "session"}}),
@@ -152,14 +167,16 @@ def stats(conn, f: Filters) -> dict:
             "uris": _fmt(_top(a["uris"], " "), 15),
             "urls": _fmt(_buckets(a["urls"]), 15),
             "agents": _fmt(_buckets(a["agents"])),
-            "tcp_payloads": _fmt(_top(a["tcp_payloads"], " — "))}
+            "tcp_payloads": _fmt(_top(a["tcp_payloads"], " — ")),
+            "tactics": _fmt(_buckets(a["tactics"]), 15),
+            "techniques": _fmt(_techniques(a["techniques"]), 20)}
 
 
 # --------------------------------------------------------------------------- events
 
 _EVENT_FIELDS = ["ts", "client", "protocol", "status", "msg", "session", "src_ip", "src_port",
                  "user", "password", "command", "method", "uri", "user_agent", "description",
-                 "source", "url", "title", "device", "browser_user"]
+                 "source", "url", "title", "device", "browser_user", "techniques", "tactics"]
 
 
 def _row(hit) -> dict:
@@ -279,6 +296,7 @@ def ip_profile(conn, ip: str) -> dict:
         "uris": _filter_agg({"term": {"protocol": "HTTP"}}, _multi(["method", "uri"], 15)),
         "urls": _filter_agg({"term": {"source": "browser"}}, _terms("url", 30)),
         "agents": _terms("user_agent", 20), "clients_ver": _terms("client_ver", 20),
+        "tactics": _terms("tactics", 15), "techniques": _terms("techniques", 20),
         "uniq_ip": {"cardinality": {"field": "src_ip"}},
         "sessions_c": _filter_agg({"bool": {"must_not": [{"term": {"status": "Stateless"}}]}},
                                   {"cardinality": {"field": "session"}}),
@@ -299,9 +317,30 @@ def ip_profile(conn, ip: str) -> dict:
             "commands": _buckets(a["commands"])[:50], "uris": _top(a["uris"], " ")[:15],
             "urls": _buckets(a["urls"])[:30],
             "agents": _buckets(a["agents"]), "clients_ver": _buckets(a["clients_ver"]),
+            "tactics": _buckets(a["tactics"]), "techniques": _techniques(a["techniques"]),
             "sessions": _session_rows(a["sessions"])[:10],
             "activity": [{"bucket": b["key_as_string"], "count": b["doc_count"]} for b in a["activity"]["buckets"]],
             "note": note}
+
+
+def attack_matrix(conn, f: Filters) -> dict:
+    """ATT&CK tactics -> techniques with counts, for the matrix view."""
+    aggs = {"tactics": {"terms": {"field": "tactics", "size": 20},
+                        "aggs": {"techniques": {"terms": {"field": "techniques", "size": 30}}}},
+            "classified": {"filter": _exists("techniques")}}
+    res = store.search(f.query(), size=0, aggs=aggs, track_total=True)
+    a = res["aggregations"]
+    by_tactic = {}
+    for tb in a["tactics"]["buckets"]:
+        techs = []
+        for xb in tb["techniques"]["buckets"]:
+            info = mitre.TECHNIQUES.get(xb["key"])
+            if info and info[1] == tb["key"]:  # technique belongs to this tactic
+                techs.append({"id": xb["key"], "name": info[0], "count": xb["doc_count"]})
+        by_tactic[tb["key"]] = {"tactic": tb["key"], "count": tb["doc_count"], "techniques": techs}
+    ordered = [by_tactic[t] for t in mitre.TACTICS if t in by_tactic]
+    return {"total": res["hits"]["total"]["value"], "classified": a["classified"]["doc_count"],
+            "tactics": ordered}
 
 
 def client_counts(conn) -> dict[str, dict]:

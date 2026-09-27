@@ -206,6 +206,19 @@ pre.raw { background: var(--term-bg); color: var(--term-text); padding: 12px; bo
   .bubble, .toolchip, .confirm { max-width: 100%; }
 }
 
+/* MITRE ATT&CK matrix */
+.matrix { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; align-items: start; }
+.tactic-col { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: var(--shadow); }
+.tactic-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 650; font-size: 13px; margin-bottom: 6px; }
+.tactic-head .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.tactic-bar { height: 4px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+.tactic-bar span { display: block; height: 100%; background: var(--accent); }
+.tech { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: baseline; padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; background: var(--panel-2); border: 1px solid var(--line); }
+.tech:hover { border-color: var(--accent); text-decoration: none; }
+.tech .tid { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+.tech .tname { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tech .tn { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+
 /* login */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login .panel { width: 100%; max-width: 360px; padding: 28px; }

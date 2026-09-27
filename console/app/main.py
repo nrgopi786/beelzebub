@@ -11,7 +11,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, Respo
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, assistant, auth, config, db, ingest, manager, store, telemetry
+from . import analytics, assistant, auth, config, db, ingest, manager, mitre, store, telemetry
 from .analytics import Filters
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -68,9 +68,11 @@ def current_user(request: Request) -> str:
 
 def filters(client: str | None = None, protocol: str | None = None, ip: str | None = None,
             session: str | None = None, status: str | None = None, q: str | None = None,
-            since: str | None = "24h", until: str | None = None, source: str | None = None) -> Filters:
+            since: str | None = "24h", until: str | None = None, source: str | None = None,
+            technique: str | None = None, tactic: str | None = None) -> Filters:
     f = Filters(client or None, protocol or None, ip or None, session or None, status or None,
-                (q or "").strip()[:200] or None, since, until or None, source or None)
+                (q or "").strip()[:200] or None, since, until or None, source or None,
+                technique or None, tactic or None)
     try:
         f.query()
     except ValueError as exc:
@@ -182,10 +184,12 @@ def put_ip_note(ip: str, body: dict = Body(...), user: str = Depends(current_use
 
 EXPORT_COLS = ["id", "ts", "source", "client", "protocol", "status", "msg", "session", "src_ip",
                "src_port", "user", "password", "command", "method", "uri", "url", "title",
-               "user_agent", "host", "device", "description"]
+               "user_agent", "host", "device", "description", "techniques", "tactics"]
 
 
 def _csv_safe(value) -> str:
+    if isinstance(value, list):
+        value = ";".join(str(v) for v in value)
     s = "" if value is None else str(value)
     # Neutralise spreadsheet formula injection from attacker-controlled fields.
     return "'" + s if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s
@@ -435,6 +439,19 @@ def assistant_resolve(pid: str, body: dict = Body(...), user: str = Depends(curr
         return assistant.resolve(pid, user, bool(body.get("approve")))
     except KeyError:
         raise HTTPException(404, "action not found, already handled or expired") from None
+
+
+# --------------------------------------------------------------------------- mitre att&ck
+
+@app.get("/api/attack")
+def attack(f: Filters = Depends(filters)):
+    with db.session() as conn:
+        return analytics.attack_matrix(conn, f)
+
+
+@app.get("/api/attack/catalog")
+def attack_catalog():
+    return mitre.catalog()
 
 
 # --------------------------------------------------------------------------- store + telemetry

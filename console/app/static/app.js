@@ -130,7 +130,7 @@ function render() {
   const { parts, params } = route();
   const views = {
     overview: viewOverview, events: viewEvents, sessions: viewSessions, session: viewSession,
-    attackers: viewAttackers, ip: viewIp, xpods: viewXpods, xpod: viewXpod, telemetry: viewTelemetry, audit: viewAudit, assistant: viewAssistant,
+    attackers: viewAttackers, ip: viewIp, xpods: viewXpods, xpod: viewXpod, attack: viewAttack, telemetry: viewTelemetry, audit: viewAudit, assistant: viewAssistant,
   };
   const view = views[parts[0]] || viewOverview;
   const main = h('main', { class: 'main' });
@@ -150,7 +150,7 @@ function sidebar(active) {
     h('div', { class: 'brand' }, LOGO(), 'Xpods Console'),
     h('nav', { class: 'nav' },
       item('overview', 'Overview'), item('events', 'Events'), item('sessions', 'Sessions'),
-      item('attackers', 'Attackers'), item('xpods', 'Xpods'), item('assistant', 'Assistant'), item('telemetry', 'Telemetry'), item('audit', 'Audit log')),
+      item('attackers', 'Attackers'), item('attack', 'ATT&CK'), item('xpods', 'Xpods'), item('assistant', 'Assistant'), item('telemetry', 'Telemetry'), item('audit', 'Audit log')),
     h('div', { class: 'spacer' }),
     h('div', { class: 'who' }, h('span', {}, state.user),
       h('button', { class: 'btn small', onclick: async () => { await api('/logout', { method: 'POST' }); state.user = null; render(); } }, 'Sign out')));
@@ -177,6 +177,21 @@ function globalControls(onChange) {
     h('option', { value: '' }, 'All Xpods'),
     state.clients.map((c) => h('option', { value: c.name, selected: c.name === state.client }, c.name)));
   return [sel, seg];
+}
+
+async function loadCatalog() {
+  if (!state.catalog) { try { state.catalog = await api('/attack/catalog'); } catch (e) { if (e instanceof AuthError) throw e; state.catalog = { techniques: {}, tactics: [] }; } }
+  return state.catalog;
+}
+
+function attackBadges(ids) {
+  if (!ids || !ids.length) return null;
+  const cat = (state.catalog && state.catalog.techniques) || {};
+  return h('div', {}, ids.map((id) => {
+    const info = cat[id] || {};
+    return h('a', { class: 'chip', href: '#/events' + qs({ technique: id, since: 'all' }),
+      title: (info.name || id) + (info.tactic ? ' · ' + info.tactic : '') }, id + (info.name ? ' ' + info.name : ''));
+  }));
 }
 
 // ------------------------------------------------------------------ widgets
@@ -259,7 +274,7 @@ function eventSummary(e) {
 // ------------------------------------------------------------------ overview
 
 async function viewOverview(main) {
-  await loadClients();
+  await Promise.all([loadClients(), loadCatalog()]);
   const refresh = () => render();
   main.append(topbar('Overview', h('button', { class: 'btn', onclick: () => askAssistant(`Summarize attack activity for the last ${state.since}${state.client ? ' on Xpod ' + state.client : ''} and highlight anything that needs attention.`) }, 'Ask assistant'), ...globalControls(refresh)));
   const s = await api('/stats' + qs(globalFilters()));
@@ -276,6 +291,9 @@ async function viewOverview(main) {
         panel('Top source IPs', bars(s.ips, (ip) => go('/ip/' + encodeURIComponent(ip)))),
         panel('By protocol', bars(s.protocols, (p) => toEvents({ protocol: p })())),
         panel('By Xpod', bars(s.clients, (c) => { state.client = c; localStorage.setItem('client', c); refresh(); }))),
+      h('div', { class: 'grid g2' },
+        panel('MITRE ATT&CK tactics', bars(s.tactics, (t) => toEvents({ tactic: t })())),
+        panel('Top ATT&CK techniques', bars(s.techniques, (k) => toEvents({ technique: k.split(' ')[0] })()))),
       h('div', { class: 'grid g3' },
         panel('Credentials tried', bars(s.credentials, (c) => toEvents({ q: c.split(' : ')[1] || c })())),
         panel('Usernames', bars(s.users, (u) => toEvents({ q: u })())),
@@ -295,8 +313,8 @@ async function viewOverview(main) {
 // ------------------------------------------------------------------ events
 
 async function viewEvents(main, _parts, params) {
-  await loadClients();
-  const f = { protocol: params.protocol || '', status: params.status || '', ip: params.ip || '', q: params.q || '', session: params.session || '' };
+  await Promise.all([loadClients(), loadCatalog()]);
+  const f = { protocol: params.protocol || '', status: params.status || '', ip: params.ip || '', q: params.q || '', session: params.session || '', technique: params.technique || '', tactic: params.tactic || '' };
   if (params.since) state.since = params.since;
   if (params.client !== undefined) state.client = params.client;
   if (params.source !== undefined) { state.source = params.source; localStorage.setItem("source", state.source); }
@@ -314,6 +332,8 @@ async function viewEvents(main, _parts, params) {
     h('div', { class: 'filters' }, search, ipIn, proto, status,
       h('button', { class: 'btn primary', onclick: apply }, 'Search'),
       f.session ? h('span', { class: 'chip' }, 'session ' + f.session.slice(0, 8), ' ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); f.session = ''; apply(); } }, '×')) : null,
+      f.technique ? h('span', { class: 'chip' }, 'technique ' + f.technique, ' ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); f.technique = ''; apply(); } }, '×')) : null,
+      f.tactic ? h('span', { class: 'chip' }, 'tactic ' + f.tactic, ' ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); f.tactic = ''; apply(); } }, '×')) : null,
       h('div', { style: 'flex:1' }),
       exportLink('csv', 'Export CSV'), exportLink('json', 'Export JSON'), exportLink('ioc', 'IP list')));
 
@@ -361,6 +381,8 @@ async function showEvent(box, id) {
       e.src_ip ? h('a', { class: 'btn small', href: '#/ip/' + encodeURIComponent(e.src_ip) }, 'Investigate IP') : null,
       e.session && e.status !== 'Stateless' ? h('a', { class: 'btn small', href: '#/session/' + encodeURIComponent(e.session) }, 'Open session') : null),
     h('dl', { class: 'kv' }, fields.map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])),
+    e.techniques && e.techniques.length ? h('h2', { style: 'margin-top:16px' }, 'MITRE ATT&CK') : null,
+    e.techniques && e.techniques.length ? attackBadges(e.techniques) : null,
     raw ? h('h2', { style: 'margin-top:16px' }, 'Raw event') : null,
     raw ? h('pre', { class: 'raw' }, raw) : null);
 }
@@ -981,6 +1003,26 @@ async function viewAssistant(main, parts, params) {
   send.onclick = sendMsg;
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
   if (state.pendingAsk) { input.value = state.pendingAsk; state.pendingAsk = null; sendMsg(); } else input.focus();
+}
+
+// ------------------------------------------------------------------ MITRE ATT&CK
+
+async function viewAttack(main) {
+  await Promise.all([loadClients(), loadCatalog()]);
+  const refresh = () => render();
+  main.append(topbar('MITRE ATT&CK', ...globalControls(refresh)));
+  const m = await api('/attack' + qs(globalFilters()));
+  main.append(h('div', { class: 'kpis' },
+    [['Events', m.total], ['Classified', m.classified], ['Tactics seen', m.tactics.length]]
+      .map(([l, v]) => h('div', { class: 'kpi' }, h('div', { class: 'v' }, fmtN(v)), h('div', { class: 'l' }, l)))));
+  if (!m.tactics.length) { main.append(h('div', { class: 'panel empty' }, 'No classified attacker activity in this period.')); return; }
+  const maxT = Math.max(...m.tactics.map((t) => t.count));
+  main.append(h('div', { class: 'matrix' }, m.tactics.map((t) => h('div', { class: 'tactic-col' },
+    h('div', { class: 'tactic-head' }, h('span', {}, t.tactic), h('span', { class: 'n' }, fmtN(t.count))),
+    h('div', { class: 'tactic-bar' }, h('span', { style: `width:${(100 * t.count / maxT).toFixed(0)}%` })),
+    t.techniques.map((x) => h('a', { class: 'tech', href: '#/events' + qs({ technique: x.id, ...globalFilters() }),
+      title: x.id + ' ' + x.name },
+      h('span', { class: 'tid' }, x.id), h('span', { class: 'tname' }, x.name), h('span', { class: 'tn' }, fmtN(x.count))))))));
 }
 
 // ------------------------------------------------------------------ telemetry / enrollments

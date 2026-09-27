@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, db, store
+from . import config, db, mitre, store
 
 log = logging.getLogger("console.ingest")
 
@@ -84,6 +84,11 @@ def parse_line(client: str, line: bytes) -> dict | None:
         val = _clip(ev.get(key))
         if val:
             doc[field] = val
+    techniques, tactics = mitre.classify(doc)
+    doc["classified"] = True
+    if techniques:
+        doc["techniques"] = techniques
+        doc["tactics"] = tactics
     return doc
 
 
@@ -164,6 +169,32 @@ def scan_once(conn) -> None:
         _tail_live(conn, client, logs / "beelzebub.log")
 
 
+def backfill_attack() -> int:
+    """Classify events indexed before ATT&CK tagging existed (idempotent via `classified`)."""
+    query = {"bool": {"must_not": [{"exists": {"field": "classified"}}],
+                      "filter": [{"term": {"source": "xpod"}}]}}
+    fields = ["protocol", "command", "uri", "method", "body", "user_agent", "password", "source"]
+    updates, total = [], 0
+    try:
+        for _id, index, src in store.scan(query, fields):
+            techniques, tactics = mitre.classify(src)
+            doc = {"classified": True}
+            if techniques:
+                doc["techniques"] = techniques
+                doc["tactics"] = tactics
+            updates.append((index, _id, doc))
+            if len(updates) >= 500:
+                total += store.bulk_update(updates)
+                updates.clear()
+        total += store.bulk_update(updates)
+    except store.StoreError as exc:
+        log.warning("attack backfill failed: %s", exc)
+        return 0
+    if total:
+        log.info("ATT&CK: backfilled %d events", total)
+    return total
+
+
 def purge(conn=None) -> None:
     if config.RETENTION_DAYS <= 0:
         return
@@ -176,6 +207,10 @@ def _run(stop: threading.Event) -> None:
     # Wait for the store to accept the index template before ingesting.
     while not stop.is_set() and not store.ensure_ready():
         stop.wait(5)
+    try:
+        backfill_attack()
+    except Exception:
+        log.exception("attack backfill pass failed")
     last_purge = 0.0
     while not stop.is_set():
         try:

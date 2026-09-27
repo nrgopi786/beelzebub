@@ -27,7 +27,7 @@ SEARCH_FIELDS = ("command", "uri", "user", "password", "user_agent", "body", "ou
 KEYWORD = ("source", "client", "protocol", "status", "msg", "session", "src_ip", "src_port",
            "user", "password", "method", "uri", "user_agent", "host", "client_ver",
            "description", "handler", "tls_sni", "url", "title", "device", "browser_user",
-           "visit_type")
+           "visit_type", "techniques", "tactics")
 
 _MAPPING = {
     "index_patterns": [INDEX_PATTERN],
@@ -65,6 +65,9 @@ _MAPPING = {
                 "device": {"type": "keyword"},
                 "browser_user": {"type": "keyword"},
                 "visit_type": {"type": "keyword"},
+                "techniques": {"type": "keyword"},
+                "tactics": {"type": "keyword"},
+                "classified": {"type": "boolean"},
                 "raw": {"type": "text", "index": False},
             },
         },
@@ -97,13 +100,55 @@ def _req(method: str, path: str, body=None, timeout: int = 30, ndjson: bool = Fa
         raise StoreError(f"{method} {path} -> {e}") from None
 
 
+ATTACK_PROPS = {"techniques": {"type": "keyword"}, "tactics": {"type": "keyword"},
+                "classified": {"type": "boolean"}}
+
+
 def ensure_ready() -> bool:
     try:
         _req("PUT", f"/_index_template/{TEMPLATE}", _MAPPING, timeout=10)
+        put_mapping(ATTACK_PROPS)  # add ATT&CK fields to any pre-existing indices
         return True
     except StoreError as e:
         log.warning("store not ready: %s", e)
         return False
+
+
+def put_mapping(props: dict) -> None:
+    """Add new fields to existing indices' mappings (no-op when none match)."""
+    try:
+        _req("PUT", f"/{INDEX_PATTERN}/_mapping", {"properties": props}, timeout=15)
+    except StoreError as e:
+        if "index_not_found" not in str(e) and "no such index" not in str(e).lower():
+            log.warning("put_mapping: %s", e)
+
+
+def scan(query: dict, fields, batch: int = 1000):
+    """Yield (_id, index, _source) across the whole result set via search_after."""
+    after = None
+    while True:
+        res = search(query, size=batch, sort=[{"ts": "asc"}, {"_id": "asc"}], source=fields,
+                     search_after=after)
+        hits = res["hits"]["hits"]
+        if not hits:
+            return
+        for h in hits:
+            yield h["_id"], h["_index"], h["_source"]
+        if len(hits) < batch:
+            return
+        after = hits[-1]["sort"]
+
+
+def bulk_update(updates: list[tuple]) -> int:
+    """updates: list of (index, _id, partial_doc). Returns number updated."""
+    if not updates:
+        return 0
+    lines = []
+    for index, _id, doc in updates:
+        lines.append(json.dumps({"update": {"_index": index, "_id": _id}}))
+        lines.append(json.dumps({"doc": doc}, default=str))
+    res = _req("POST", "/_bulk", "\n".join(lines) + "\n", ndjson=True, timeout=120)
+    return sum(1 for it in res.get("items", []) if it.get("update", {}).get("status") in (200, 201))
 
 
 def health() -> dict:
@@ -164,7 +209,8 @@ def build_query(f) -> dict:
     must, filt = [], []
     for field, val in (("source", getattr(f, "source", None)), ("client", f.client),
                        ("protocol", f.protocol), ("src_ip", f.ip), ("session", f.session),
-                       ("status", f.status)):
+                       ("status", f.status), ("techniques", getattr(f, "technique", None)),
+                       ("tactics", getattr(f, "tactic", None))):
         if val:
             filt.append({"term": {field: val}})
     rng = {}
