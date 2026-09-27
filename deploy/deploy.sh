@@ -194,6 +194,15 @@ check_ports_free() {
     if ss -Hltn "sport = :$p" 2>/dev/null | grep -q .; then busy+=("$p"); fi
   done
   if ((${#busy[@]})); then
+    # Name any other Xpod holding the ports; otherwise it is a host service.
+    local owners=() proj
+    for p in "${busy[@]}"; do
+      proj="$(docker ps --filter "publish=$p" --format '{{.Label "com.docker.compose.project"}}' | grep '^hp-' | head -n1)"
+      [[ -n "$proj" && " ${owners[*]} " != *" ${proj#hp-} "* ]] && owners+=("${proj#hp-}")
+    done
+    if ((${#owners[@]})); then
+      die "host ports ${busy[*]} are in use by Xpod(s): ${owners[*]}. Stop them ($0 down <name>), or give each Xpod its own HP_BIND_IP"
+    fi
     die "host ports already in use: ${busy[*]} (move the host service, e.g. sshd to 2222, or drop it from HP_SERVICES)"
   fi
 }
