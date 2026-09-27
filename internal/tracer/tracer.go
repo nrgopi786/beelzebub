@@ -186,7 +186,9 @@ func (tracer *tracer) GetStrategy() Strategy {
 }
 
 func (tracer *tracer) TraceEvent(event Event) {
-	event.DateTime = time.Now().UTC().Format(time.RFC3339)
+	// Nanosecond precision: events are written by concurrent workers, so the
+	// timestamp is the only reliable way to restore their original order.
+	event.DateTime = time.Now().UTC().Format(time.RFC3339Nano)
 
 	tracer.eventsChan <- event
 
