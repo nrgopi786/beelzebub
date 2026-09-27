@@ -15,3 +15,6 @@ package-lock.json
 /beelzebub
 /.beelzebub-mode
 /plugins/*/
+
+# per-client honeypot instances (secrets, certs, captured data)
+/deploy/clients/

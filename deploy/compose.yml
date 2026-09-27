@@ -1,0 +1,107 @@
+# Shared compose definition for one client honeypot instance.
+# Driven by deploy.sh, which supplies:
+#   --env-file clients/<name>/.env           client settings
+#   -f clients/<name>/compose.ports.yml      published ports derived from enabled services
+#   -p hp-<name>                             isolated compose project per client
+name: hp-${HP_CLIENT:?HP_CLIENT is required}
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  beelzebub:
+    <<: *hardening
+    image: beelzebub-honeypot:${HP_IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        BEELZEBUB_GITHUB_TOKEN: ${BEELZEBUB_GITHUB_TOKEN:-}
+    hostname: ${HP_HOSTNAME:-srv01}
+    restart: unless-stopped
+    user: "${HP_UID:-65532}:${HP_GID:-65532}"
+    command: ["--mem-limit-mib", "${HP_MEM_LIMIT_MIB:-200}"]
+    # Lets the non-root process bind 22/80/443 etc. inside its own netns.
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    mem_limit: ${HP_CONTAINER_MEM:-384m}
+    cpus: ${HP_CPUS:-1.0}
+    pids_limit: 256
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      OPEN_AI_SECRET_KEY: ${OPEN_AI_SECRET_KEY:-}
+      BEELZEBUB_RABBITMQ_ENABLED: ${HP_RABBITMQ_ENABLED:-false}
+      BEELZEBUB_RABBITMQ_URI: ${HP_RABBITMQ_URI:-}
+    volumes:
+      - ./clients/${HP_CLIENT}/config:/config:ro
+      - ./clients/${HP_CLIENT}/data/logs:/data/logs
+      - ./clients/${HP_CLIENT}/data/keys:/data/keys
+    networks: [honeynet]
+
+  # Size-based rotation of the event log (beelzebub appends to one file forever).
+  logrotate:
+    <<: *hardening
+    image: busybox:1.37
+    restart: unless-stopped
+    user: "${HP_UID:-65532}:${HP_GID:-65532}"
+    network_mode: none
+    mem_limit: 32m
+    environment:
+      MAX_MB: ${HP_LOG_MAX_MB:-100}
+      KEEP_DAYS: ${HP_LOG_KEEP_DAYS:-30}
+    volumes:
+      - ./clients/${HP_CLIENT}/data/logs:/logs
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          f=/logs/beelzebub.log
+          if [ -s "$$f" ] && [ "$$(( $$(stat -c %s "$$f") / 1048576 ))" -ge "$$MAX_MB" ]; then
+            ts=$$(date -u +%Y%m%dT%H%M%SZ)
+            cp "$$f" "/logs/beelzebub-$$ts.log" && : > "$$f" && gzip "/logs/beelzebub-$$ts.log"
+          fi
+          find /logs -name 'beelzebub-*.log.gz' -mtime +"$$KEEP_DAYS" -delete
+          sleep 60
+        done
+
+  # Optional: forward events to a central collector/SIEM (`deploy.sh up <client>` enables it
+  # when HP_SHIP_URL is set).
+  shipper:
+    <<: *hardening
+    image: timberio/vector:0.51.1-alpine
+    profiles: [ship]
+    restart: unless-stopped
+    user: "${HP_UID:-65532}:${HP_GID:-65532}"
+    mem_limit: 128m
+    environment:
+      HP_CLIENT: ${HP_CLIENT}
+      HP_DOMAIN: ${HP_DOMAIN:-}
+      HP_SHIP_URL: ${HP_SHIP_URL:-}
+      HP_SHIP_AUTH_HEADER: ${HP_SHIP_AUTH_HEADER:-}
+      VECTOR_DATA_DIR: /var/lib/vector
+    command: ["--config", "/etc/vector/vector.yaml"]
+    volumes:
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./clients/${HP_CLIENT}/data/logs:/logs:ro
+      - ./clients/${HP_CLIENT}/data/vector:/var/lib/vector
+    networks: [shipnet]
+
+networks:
+  honeynet:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+  shipnet:
+    driver: bridge

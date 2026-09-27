@@ -1,0 +1,43 @@
+# Ships beelzebub JSON events to a central HTTP collector (Vector, Logstash http input,
+# Elastic/OpenSearch _bulk proxies, Splunk HEC raw, Loki push gateways, ...).
+sources:
+  honeypot_log:
+    type: file
+    include: ["/logs/beelzebub.log"]
+    read_from: beginning
+    # Rotation copies then truncates the file; fingerprint by content, not inode.
+    fingerprint:
+      strategy: checksum
+
+transforms:
+  enrich:
+    type: remap
+    inputs: [honeypot_log]
+    source: |
+      parsed, err = parse_json(.message)
+      if err == null && is_object(parsed) {
+        . = merge!(., parsed)
+        del(.message)
+      }
+      .honeypot_client = get_env_var!("HP_CLIENT")
+      .honeypot_domain = get_env_var("HP_DOMAIN") ?? ""
+      del(.file)
+      del(.source_type)
+
+sinks:
+  collector:
+    type: http
+    inputs: [enrich]
+    uri: "${HP_SHIP_URL}"
+    method: post
+    encoding:
+      codec: json
+    framing:
+      method: newline_delimited
+    request:
+      headers:
+        Authorization: "${HP_SHIP_AUTH_HEADER}"
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: drop_newest
