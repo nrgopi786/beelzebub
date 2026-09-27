@@ -8,6 +8,9 @@ scanners and attackers targeting that name hit the decoy services.
 Nothing runs on the host except Docker: the build, TLS issuance, log rotation, and
 log shipping all run in containers.
 
+A web UI for managing these instances and investigating attacker activity lives in
+[`console/`](../console/README.md) (`cd console && ./console.sh up`).
+
 ## Quick start
 
 ```bash

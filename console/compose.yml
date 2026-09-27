@@ -1,0 +1,39 @@
+# Honeypot management console. Start with ./console.sh up (it writes .env first).
+name: honeypot-console
+
+services:
+  console:
+    build: .
+    image: honeypot-console:local
+    restart: unless-stopped
+    # Host netns: deploy.sh port checks see real host sockets, and the UI binds to
+    # CONSOLE_HOST (127.0.0.1 by default) on the host directly.
+    network_mode: host
+    user: "${CONSOLE_UID:?run ./console.sh init}:${CONSOLE_GID}"
+    # Docker socket access. NOTE: this is root-equivalent on the host; keep the
+    # console on loopback / behind an authenticated TLS reverse proxy or VPN.
+    group_add: ["${DOCKER_GID}"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m
+    env_file: .env
+    environment:
+      CONSOLE_DB: /data/console.db
+      HOME: /tmp
+      DOCKER_CONFIG: /data/docker
+      UVICORN_HOST: ${CONSOLE_HOST:-127.0.0.1}
+      UVICORN_PORT: ${CONSOLE_PORT:-8088}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same absolute path as on the host: deploy.sh hands bind-mount paths to the
+      # Docker daemon, which resolves them on the host.
+      - ${REPO_DIR}:${REPO_DIR}
+      - ./data:/data
+    mem_limit: 512m
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
